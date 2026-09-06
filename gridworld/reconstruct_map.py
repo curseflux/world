@@ -125,6 +125,9 @@ def main():
     parser.add_argument("--max-distance", type=float, default=0.0,
                         help="0 uses the length of the longest true edge")
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--show-nodes", action="store_true",
+                        help="draw a dot at each intersection. Off by default: the "
+                             "paper's make_map draws edges only.")
     parser.add_argument("--show-unused", action="store_true",
                         help="also draw true edges the reconstruction never used. The "
                              "paper's make_map skips these, so the default does too.")
@@ -194,13 +197,13 @@ def main():
                 f"{metrics['false_edges_invented']} false edges   -   {source}")
     render.render(reconstructed, coords, f"{args.out_dir}/map.svg",
                   title="Reconstructed map", subtitle=subtitle,
-                  show_unused=args.show_unused)
+                  show_unused=args.show_unused, show_nodes=args.show_nodes)
     render.render_pair(
         true_graph, reconstructed, coords, f"{args.out_dir}/true_vs_reconstructed.svg",
         left_title="True world model",
         left_sub=f"{true_graph.number_of_edges()} edges",
         right_title="Reconstructed from sequences", right_sub=subtitle,
-        show_unused=args.show_unused)
+        show_unused=args.show_unused, show_nodes=args.show_nodes)
 
     print(json.dumps(metrics, indent=2))
     print(f"-> {args.out_dir}/map.svg")

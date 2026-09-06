@@ -32,6 +32,9 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--map-dir", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--show-nodes", action="store_true",
+                        help="draw a dot at each intersection. Off by default: the "
+                             "paper's make_map draws edges only.")
     parser.add_argument("--title", default="True world model")
     parser.add_argument("--cell", type=int, default=64)
     args = parser.parse_args()
@@ -43,7 +46,7 @@ def main():
                 f"one-way streets, mean out-degree "
                 f"{sum(degrees) / len(degrees):.2f}")
     render.render(graph, coords, args.out, title=args.title, subtitle=subtitle,
-                  cell=args.cell)
+                  cell=args.cell, show_nodes=args.show_nodes)
     print(subtitle)
     print(f"-> {args.out}")
 
