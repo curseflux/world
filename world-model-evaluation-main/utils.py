@@ -1,4 +1,5 @@
 from collections import defaultdict
+import glob
 import json
 import os
 from model import GPT2Model, SimpleTokenizer, TextDataset, collate_fn
@@ -174,7 +175,22 @@ def load_model(data, use_untrained_model=False):
                     n_head=n_head,)
 
   if not use_untrained_model:
+    # ModelCheckpoint writes "{epoch}-{step}.ckpt" plus last.ckpt, never
+    # "model.ckpt", so resolve the best available checkpoint rather than
+    # requiring the user to rename one by hand. Explicit model.ckpt still wins.
     checkpoint_path = f"{model_dir}/model.ckpt"
+    if not os.path.exists(checkpoint_path):
+      candidates = sorted(
+        (f for f in glob.glob(f"{model_dir}/*.ckpt") if not f.endswith("last.ckpt")),
+        key=os.path.getmtime)
+      if not candidates and os.path.exists(f"{model_dir}/last.ckpt"):
+        candidates = [f"{model_dir}/last.ckpt"]
+      if not candidates:
+        raise FileNotFoundError(
+          f"No checkpoint in {model_dir}/. Train with --model_name {data} so the "
+          f"checkpoints land where the eval scripts look for them.")
+      checkpoint_path = candidates[-1]
+      print(f"Loading checkpoint {checkpoint_path}")
     # Same reason: GPT2Model.save_hyperparameters() puts the tokenizer object
     # inside the checkpoint, so this is not a pure state dict either.
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)

@@ -8,6 +8,10 @@ Read off mapping/make_maps.py, which is what produced Figures 3 and 9:
     what the Figure 9 caption means by "a darkening gradient indicating the
     directionality of the edge".
   * true edges never used -- skipped entirely (`continue` in make_map)
+  * nodes -- not drawn at all. make_map assigns a `radius` and never uses it; it
+    only ever adds edge lines. A dot at every intersection makes a lattice read
+    as graph paper, which is exactly the wrong impression: the regular-looking
+    lines are roads, not gridlines.
 
 No arrowheads anywhere: on a graph this dense they bury the signal. Direction is
 carried by the gradient, and only on the edges where it matters.
@@ -62,7 +66,7 @@ def _curve_points(x1, y1, x2, y2, direction, bulge, steps=14):
     return points
 
 
-def panel(graph, coords, cell=64, show_unused=False, origin=(0, 0), node_radius=2.6):
+def panel(graph, coords, cell=64, show_unused=False, origin=(0, 0), show_nodes=False):
     """SVG elements for one map, plus the size of the box they occupy."""
     ox, oy = origin
     rows = max(r for r, _ in coords.values()) + 1
@@ -98,10 +102,10 @@ def panel(graph, coords, cell=64, show_unused=False, origin=(0, 0), node_radius=
                 f'stroke="{style["color"]}" stroke-width="{style["width"]}" '
                 f'opacity="{style["alpha"]}"/>')
 
-    for node in coords:
-        x, y = xy(node)
-        parts.append(f'<circle cx="{x}" cy="{y}" r="{node_radius}" fill="#111827" '
-                     f'opacity="0.55"/>')
+    if show_nodes:
+        for node in coords:
+            x, y = xy(node)
+            parts.append(f'<circle cx="{x}" cy="{y}" r="2.2" fill="#111827" opacity="0.5"/>')
 
     return parts, ((cols - 1) * cell, (rows - 1) * cell)
 
@@ -123,10 +127,11 @@ def _caption(x, y, text, size=12, colour="#4b5563", weight="normal"):
 
 
 def render(graph, coords, path, title="", subtitle="", cell=64, pad=40,
-           show_unused=False):
+           show_unused=False, show_nodes=False):
     """Render a single map to `path`."""
     top = pad + (30 if title else 0) + (16 if subtitle else 0)
-    body, (w, h) = panel(graph, coords, cell, show_unused, origin=(pad, top))
+    body, (w, h) = panel(graph, coords, cell, show_unused, origin=(pad, top),
+                         show_nodes=show_nodes)
     width, height = w + 2 * pad, top + h + pad
     head = []
     if title:
@@ -139,12 +144,14 @@ def render(graph, coords, path, title="", subtitle="", cell=64, pad=40,
 
 def render_pair(left, right, coords, path, left_title, right_title,
                 left_sub="", right_sub="", cell=64, pad=40, gap=54,
-                show_unused=False):
+                show_unused=False, show_nodes=False):
     """Two maps side by side, in the layout of the paper's Figure 3."""
     top = pad + 46
-    left_body, (w, h) = panel(left, coords, cell, show_unused, origin=(pad, top))
+    left_body, (w, h) = panel(left, coords, cell, show_unused, origin=(pad, top),
+                              show_nodes=show_nodes)
     right_x = pad + w + gap
-    right_body, _ = panel(right, coords, cell, show_unused, origin=(right_x, top))
+    right_body, _ = panel(right, coords, cell, show_unused, origin=(right_x, top),
+                          show_nodes=show_nodes)
     width, height = right_x + w + pad, top + h + pad
 
     head = [
