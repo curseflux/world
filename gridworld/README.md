@@ -78,6 +78,16 @@ python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
 Writes `map.svg`, `true_vs_reconstructed.svg` (the Figure 3 layout),
 `reconstruction.json` and `invented_edges.json`.
 
+Then the same run as a curve, because a single precision or Jaccard number is a
+property of (model, sequence budget) rather than of the model:
+
+```bash
+python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
+    --samples world-model-evaluation-main/results/nyc10-random-walks/samples.txt \
+    --num-sequences 6400 --sweep \
+    --out-dir world-model-evaluation-main/results/nyc10-random-walks/map
+```
+
 ### 5. The matched noise control
 
 An absolute precision number means nothing on its own. Corrupt true traversals
@@ -95,10 +105,28 @@ python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
 ### Steps 3-5 in one go
 
 ```bash
-./gridworld/run_evals.sh nyc10-random-walks gridworld/maps/nyc10
+./gridworld/run_evals.sh nyc10-random-walks gridworld/maps/nyc10 [num-sequences]
 ```
 
-Runs every metric, samples, reconstructs, and derives the control rate itself.
+Runs every metric, samples from the model, reconstructs both point estimate and
+sweep, derives the control's error rate from the model's own, runs the control at
+the same rate *and* the same budget, and prints a summary ending in the number
+that matters:
+
+```
+  reconstructed edges      498 vs 170 true (ratio 2.93)
+  edge jaccard             0.290
+  impossible orientations  0.620
+  control jaccard          0.341 (same error rate and budget)
+
+  GAP vs control           -0.051
+```
+
+Each step is guarded: one metric failing does not stop the rest, and the
+reconstruction steps gate each other so a failed sampling run cannot cascade into
+a control run with no error rate to use. Failures are tallied at the end and
+recorded in `console.log`. For the paper's untrained reference row, re-run the
+metric scripts by hand with `--use-untrained-model`.
 
 ### Rendering maps on their own
 
@@ -199,17 +227,85 @@ edge's own *label*, so an edge labelled NW that runs east bulges northwest befor
 swinging back -- which is how "impossible physical orientations" and "flyovers"
 become visible rather than merely counted.
 
-### Reconstruction scoring
+### Every metric, and what it is worth
+
+| metric | file | paper's Manhattan values | what it tells you |
+| --- | --- | --- | --- |
+| `next_token_accuracy` | `next_token_test.json` | 1.00 / 1.00 / 1.00 | **Smoke test only.** Saturates for every trained model. This is the Connect-4 point of Section 2.2: a model that ignores state entirely can still be a near-perfect next-token predictor. Below ~0.95 means something is broken. |
+| `probe_accuracy` | `probe_test.json` | 0.91 / 0.92 / 0.99 (0.10 untrained) | **Not a world-model measure.** Linear decodability of the current intersection. Probe accuracy is invariant under any invertible linear map of the residual stream, so it constrains nothing about how states relate to each other. The untrained baseline of 0.10 over 4,580 classes shows how much comes free from the prefix. |
+| `percent_valid_traversals` | `evaluate_traversal_capabilities.json` | 0.96 - 0.99 | Capability, not coherence. Can it route at all on unseen OD pairs. |
+| `compression_precision` | `compression_test.json` | 0.10 / 0.05 / 0.50 | **The headline diagnostic.** Two prefixes reaching the *same* state must accept the same continuations. This is where the paper's models fail hardest while scoring 1.00 on next-token. |
+| `distinction_precision`, `distinction_recall` | `distinction_test.json` | 0.35/0.20, 0.37/0.24, 0.99/1.00 | Two prefixes reaching *different* states must have distinguishing suffixes. Random walks pass this while still failing compression, which is why both are needed. |
+| `valid_traversal_rate` | `detour_analysis-p<rate>.json` | 0.99 -> 0.69 at p=0.01 (shortest paths) | **The consequence.** An incoherent map cannot re-route. The shortest-paths model loses a third of its traversals at a 1% detour rate. |
+| `edge_jaccard` | `map/reconstruction.json` | (figures only) | **The "same map, no more and no less" number.** Reaches 1.0 only when the reconstructed edge set equals the true one exactly; every invented *and* every missed edge drives it down. This is the one to quote. |
+| `edge_count_ratio` | `map/reconstruction.json` | (figures only) | `\|E_reconstructed\| / \|E_true\|`. Says how badly and in which direction the edge budget is blown. 1.0 is right; 2.9 means the implied city has nearly three times the streets. |
+| `edge_precision`, `edge_recall`, `edge_f1` | `map/reconstruction.json` | (figures only) | The components. Recall saturates at 1.0 almost immediately, so F1 and Jaccard are both driven by precision here. |
+| `impossible_orientation_rate` | `map/reconstruction.json` | (figures only) | Share of invented edges whose direction label disagrees with their actual bearing -- the paper's "physically impossible orientations", counted. |
+| `counter_model_accuracy` | `maps/<tag>/check_map.json` | n/a | A property of the *map*, not the model. Must stay low or the task is degenerate. |
+
+### Reconstruction scoring: which number to look at
+
+Write `R` for the edge set the model's sequences imply and `T` for the true one:
 
 ```
-precision = true_used / (true_used + invented)     of the edges the model implies, how many are real
-recall    = true_used / (true_used + never_used)   of the real edges, how many it reaches
+precision = |R n T| / |R|          of the edges the model implies, how many are real
+recall    = |R n T| / |T|          of the real edges, how many it reaches
+F1        = harmonic mean of the two
+jaccard   = |R n T| / |R u T|      how close R is to being T exactly
+ratio     = |R| / |T|              how badly the edge budget is blown, and which way
 ```
 
-Precision falls as more sequences are reconstructed (each is another chance to
-invent an edge) while recall rises, so `--num-sequences` must match across any
-two runs you compare. Fed uncorrupted sequences the reconstruction returns
-exactly 1.0 on both, which is the pipeline's self-check.
+**`edge_jaccard` is the number you want.** "Correct edges, exactly as many as the
+original, no more and no less" is set equality, `R == T`, and Jaccard is 1.0 if
+and only if that holds. An invented edge and a missed edge cost the same. Fed
+uncorrupted sequences the reconstruction returns exactly 1.0 with
+`edge_count_ratio` 1.0, which is the pipeline's self-check.
+
+Pair it with `edge_count_ratio` for the diagnosis. Recall saturates at 1.0 almost
+immediately -- a few hundred sequences reach nearly every real street -- so all
+the signal is in over-generation, and the ratio names it directly: 2.9 means the
+implied city has nearly three times Manhattan's streets.
+
+**Two things must be controlled before the number means anything.**
+
+*Budget.* Every sequence is another chance to force a new edge, so precision and
+Jaccard fall monotonically with `--num-sequences` while recall rises. A single
+value is a property of (model, budget), not of the model. `--sweep` reports the
+curve instead. At 2% corruption on the density-1.7 map:
+
+```
+   seqs    prec  recall      F1     IoU  |E|/|E*|  invented
+    200   0.677   0.988   0.804   0.672     1.459        80
+    800   0.445   1.000   0.616   0.445     2.247       212
+   3200   0.353   1.000   0.522   0.353     2.829       311
+   6307   0.341   1.000   0.509   0.341     2.929       328
+```
+
+Invention saturates -- the marginal cost per 1,000 sequences collapses from ~70
+to ~8 -- so this is a bounded map that happens to be wrong, not a model
+inventing streets without limit. A curve still climbing at the right edge means
+the opposite, and is the more damning result. Always compare two runs at the
+same budget.
+
+*A baseline.* Corrupting just **2%** of direction tokens in *true* traversals
+already drops Jaccard to ~0.34, so a model scoring 0.4 may be doing well. The
+quantity that means something is the gap against the control at the model's own
+error rate:
+
+```
+edge_jaccard(model) - edge_jaccard(control at the same error rate)
+```
+
+Near zero: the model's map is no worse than random transcription noise. Well
+below zero: its errors are structured -- an incoherent map rather than a noisy
+one. That is the comparison Figure 3 makes with its three panels, and
+`run_evals.sh` runs the control automatically.
+
+`impossible_orientation_rate` separates the two failure modes. Random corruption
+puts it near 0.9, because a randomly relabelled edge is almost never
+geometrically consistent. A model inventing *geometrically sensible* streets that
+simply are not real would score much lower -- a coherent map of the wrong city
+rather than noise.
 
 ---
 
@@ -218,15 +314,20 @@ exactly 1.0 on both, which is the pipeline's self-check.
 ```
 world-model-evaluation-main/results/<data>/
     next_token_test.json  probe_test.json  compression_test.json
-    distinction_test.json  detour_analysis.json
+    distinction_test.json  detour_analysis-p<rate>.json
     evaluate_traversal_capabilities.json
+    console.log              everything the run printed, including failures
     samples.txt              sequences drawn from the trained model
-    map/reconstruction.json  edge precision and recall
+    map/reconstruction.json  every edge metric at the full budget
+    map/sweep.json           the same metrics at doubling sequence budgets
     map/map.svg              the reconstructed map
     map/true_vs_reconstructed.svg
-    map/invented_edges.json  every false edge, listed
-    map-control/             the same, from the matched noise control
+    map/invented_edges.json  every false edge, with its label and true bearing
+    map-control/             the same pair, from the matched noise control
 ```
+
+Detour results are one file per rate -- `detour_analysis-p0.01.json` and so on --
+since the script is invoked once per probability.
 
 ## Training settings
 

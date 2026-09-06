@@ -39,6 +39,7 @@ import networkx as nx
 import reconstruction
 
 import render
+from build_map import bearing
 
 
 def load_map(map_dir):
@@ -93,21 +94,47 @@ def corrupt_sequences(valid_turns, n2n, coords, count, rate, max_len, rng):
     return sequences
 
 
-def score(reconstructed):
+def score(reconstructed, coords):
+    """Edge precision/recall, plus the rate of physically impossible edges.
+
+    reconstruct_sequence labels a new edge with the direction token that
+    produced it and never checks that against the geometry, so an edge labelled
+    NW can run east. Those are the paper's "streets whose orientations are
+    physically impossible"; counting them turns its most vivid qualitative claim
+    into a number.
+    """
     counts = {"true": 0, "new": 0, "true_unused": 0}
     invented = []
     for u, v, _, data in reconstructed.out_edges(keys=True, data=True):
         counts[data["edge_type"]] = counts.get(data["edge_type"], 0) + 1
         if data["edge_type"] == "new":
-            invented.append((u, v, data.get("direction")))
+            label = data.get("direction")
+            actual = bearing(coords[u], coords[v])
+            invented.append({"from": u, "to": v, "label": label,
+                             "actual_bearing": actual, "impossible": actual != label})
     used = counts["true"] + counts["new"]
     real = counts["true"] + counts["true_unused"]
+    union = counts["true"] + counts["new"] + counts["true_unused"]
+    impossible = sum(1 for e in invented if e["impossible"])
+    precision = counts["true"] / used if used else 0.0
+    recall = counts["true"] / real if real else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     return {
         "true_edges_recovered": counts["true"],
         "false_edges_invented": counts["new"],
         "true_edges_never_used": counts["true_unused"],
-        "edge_precision": round(counts["true"] / used, 4) if used else 0.0,
-        "edge_recall": round(counts["true"] / real, 4) if real else 0.0,
+        "reconstructed_edge_count": used,
+        "true_edge_count": real,
+        "edge_count_ratio": round(used / real, 4) if real else 0.0,
+        "edge_precision": round(precision, 4),
+        "edge_recall": round(recall, 4),
+        "edge_f1": round(f1, 4),
+        # Jaccard is the "same edge set, no more and no less" number: it reaches
+        # 1.0 only when the reconstructed edge set equals the true one exactly,
+        # and every invented or missed edge drives it down.
+        "edge_jaccard": round(counts["true"] / union, 4) if union else 0.0,
+        "impossible_orientation_edges": impossible,
+        "impossible_orientation_rate": round(impossible / counts["new"], 4) if counts["new"] else 0.0,
     }, invented
 
 
@@ -125,6 +152,9 @@ def main():
     parser.add_argument("--max-distance", type=float, default=0.0,
                         help="0 uses the length of the longest true edge")
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--sweep", action="store_true",
+                        help="report the metrics at doubling sequence budgets instead "
+                             "of one number, showing whether edge invention saturates")
     parser.add_argument("--show-nodes", action="store_true",
                         help="draw a dot at each intersection. Off by default: the "
                              "paper's make_map draws edges only.")
@@ -165,20 +195,55 @@ def main():
 
     for edge in true_graph.edges(keys=True):
         true_graph.edges[edge]["edge_type"] = "true"
-    reconstructed = true_graph.copy()
-    for edge in reconstructed.edges(keys=True):
-        reconstructed.edges[edge]["edge_type"] = "true_unused"
     neighbours = lambda graph, node: [
         other for other in graph.nodes
         if math.dist(coords[node], coords[other]) <= max_distance]
 
-    failed = 0
-    for sequence in sequences:
-        if not reconstruction.reconstruct_sequence(
-                reconstructed, sequence, neighbours, max_degree=max_degree):
-            failed += 1
+    def run(batch):
+        graph = true_graph.copy()
+        for edge in graph.edges(keys=True):
+            graph.edges[edge]["edge_type"] = "true_unused"
+        failures = 0
+        for sequence in batch:
+            if not reconstruction.reconstruct_sequence(
+                    graph, sequence, neighbours, max_degree=max_degree):
+                failures += 1
+        return graph, failures
 
-    metrics, invented = score(reconstructed)
+    if args.sweep:
+        # Invented edges accumulate with every sequence reconstructed, so a
+        # single precision number is a property of (model, budget) rather than
+        # of the model. The curve says which: one that flattens means a bounded
+        # map, even a wrong one; one still climbing means the model keeps
+        # inventing streets for as long as you keep asking.
+        budgets, size = [], 200
+        while size < len(sequences):
+            budgets.append(size)
+            size *= 2
+        budgets.append(len(sequences))
+        curve = []
+        for budget in budgets:
+            partial, _ = run(sequences[:budget])
+            point, _ = score(partial, coords)
+            curve.append({"sequences": budget, **{
+                k: point[k] for k in ("edge_precision", "edge_recall", "edge_f1",
+                                      "edge_jaccard", "edge_count_ratio",
+                                      "false_edges_invented")}})
+        print(f"{'seqs':>7}  {'prec':>6}  {'recall':>6}  {'F1':>6}  "
+              f"{'IoU':>6}  {'|E|/|E*|':>8}  {'invented':>8}")
+        for point in curve:
+            print(f"{point['sequences']:>7}  {point['edge_precision']:>6.3f}  "
+                  f"{point['edge_recall']:>6.3f}  {point['edge_f1']:>6.3f}  "
+                  f"{point['edge_jaccard']:>6.3f}  {point['edge_count_ratio']:>8.3f}  "
+                  f"{point['false_edges_invented']:>8d}")
+        os.makedirs(args.out_dir, exist_ok=True)
+        with open(f"{args.out_dir}/sweep.json", "w") as f:
+            json.dump({"source": source, "curve": curve}, f, indent=2)
+        print(f"-> {args.out_dir}/sweep.json")
+        return
+
+    reconstructed, failed = run(sequences)
+    metrics, invented = score(reconstructed, coords)
     metrics.update(sequences_used=len(sequences),
                    sequences_unreconstructable=failed,
                    max_degree=max_degree,
@@ -189,12 +254,14 @@ def main():
     with open(f"{args.out_dir}/reconstruction.json", "w") as f:
         json.dump(metrics, f, indent=2)
     with open(f"{args.out_dir}/invented_edges.json", "w") as f:
-        json.dump([{"from": u, "to": v, "direction": d} for u, v, d in invented], f, indent=2)
+        json.dump(invented, f, indent=2)
     with open(f"{args.out_dir}/reconstructed_graph.pkl", "wb") as f:
         pickle.dump(reconstructed, f)
     subtitle = (f"precision {metrics['edge_precision']:.3f}   "
                 f"recall {metrics['edge_recall']:.3f}   "
-                f"{metrics['false_edges_invented']} false edges   -   {source}")
+                f"{metrics['false_edges_invented']} false edges, "
+                f"{metrics['impossible_orientation_edges']} physically impossible"
+                f"   -   {source}")
     render.render(reconstructed, coords, f"{args.out_dir}/map.svg",
                   title="Reconstructed map", subtitle=subtitle,
                   show_unused=args.show_unused, show_nodes=args.show_nodes)
