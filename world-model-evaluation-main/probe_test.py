@@ -14,6 +14,11 @@ import pdb
 parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='shortest-paths')
 parser.add_argument('--use-untrained-model', action='store_true')
+parser.add_argument('--use-heldout', action='store_true',
+                    help='Probe representations from held-out sequences instead of '
+                         'training sequences. The default reproduces the paper, which '
+                         'fits and scores the probe on activations drawn from the '
+                         "model's own training data.")
 args = parser.parse_args()
 data = args.data
 use_untrained_model = args.use_untrained_model
@@ -34,10 +39,11 @@ tokenizer = model.tokenizer
 valid_turns = tokenizer.valid_turns
 node_and_direction_to_neighbor = tokenizer.node_and_direction_to_neighbor
 
-# num_samples = 100000
 num_samples = 25000
-dataset = load_train_data(data, tokenizer, num_samples=num_samples)
-# dataset = load_heldout_data(data, tokenizer)
+if args.use_heldout:
+  dataset = load_heldout_data(data, tokenizer)
+else:
+  dataset = load_train_data(data, tokenizer, num_samples=num_samples)
 
 # Iterate through dataset and get representations.
 batch_size = 128
