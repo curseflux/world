@@ -87,6 +87,54 @@ stopping turns the question into one you do not have to answer in advance.
 Sequences here are at most 43 tokens against GPT-2's 1024-position default, and
 the vocabulary is ~110 tokens, so large batches are cheap.
 
+## Where results go
+
+The metric scripts originally reported only through `tqdm.set_description`, so
+every number lived in a progress-bar line on stderr and vanished when the
+terminal scrolled. They now also write JSON:
+
+```
+world-model-evaluation-main/results/<data>/
+    next_token_test.json  probe_test.json  compression_test.json
+    distinction_test.json  detour_analysis.json
+    evaluate_traversal_capabilities.json
+    samples.txt              sequences drawn from the trained model
+    map/reconstruction.json  edge precision and recall
+    map/map.svg              the reconstructed map
+    map/invented_edges.json  every false edge, listed
+    map-control/             the same, from the matched noise control
+```
+
+Run the lot with `./run_evals.sh <data-name> <map-dir>`.
+
+## Reconstructing the map
+
+The paper's `mapping/` pipeline is Manhattan-only -- it downloads the street
+graph from OpenStreetMap through osmnx and renders with folium onto real
+lat/long -- so it cannot draw a synthetic grid. `sample_from_model.py` and
+`reconstruct_map.py` replace it, reusing the one generic piece,
+`mapping/reconstruction.reconstruct_sequence`, with a Euclidean neighbourhood
+and plain SVG output.
+
+The payoff of a synthetic map is that scoring stops being visual. Where the
+paper inspects maps by eye for "impossible orientations and flyovers", 100 nodes
+can be scored exactly:
+
+```
+precision = true_used / (true_used + invented)     of the edges the model implies, how many are real
+recall    = true_used / (true_used + never_used)   of the real edges, how many it reaches
+```
+
+Two things to hold fixed before comparing runs. Precision falls as more
+sequences are reconstructed, since each one is another chance to invent an edge,
+while recall rises -- so `--num-sequences` must match. And an absolute precision
+number means little on its own: `--corrupt` reproduces the paper's Figure 3
+control by corrupting a fraction of direction tokens in *true* traversals, and
+`run_evals.sh` runs it automatically at the model's own error rate. A model whose
+map is merely noisy scores like the control; one whose map is incoherent scores
+far worse. Fed uncorrupted sequences the reconstruction returns precision and
+recall of exactly 1.0, which is the pipeline's self-check.
+
 ## Scripts
 
 | script | what it does |
@@ -95,6 +143,9 @@ the vocabulary is ~110 tokens, so large batches are cheap.
 | `check_map.py` | `counter_model_accuracy`, displacements per direction, legal-turn-set partition, path-length distribution |
 | `generate_sequences.py` | shortest / noisy-shortest / random-walks datasets per Appendix F, split by OD pair |
 | `validate_dataset.py` | every sequence legal, no OD-pair leakage, node and edge coverage |
+| `sample_from_model.py` | draws traversals from a trained model, no osmnx |
+| `reconstruct_map.py` | reconstructs the implied map, scores edge precision/recall, renders SVG |
+| `run_evals.sh` | runs every metric plus reconstruction and the matched control |
 
 ## Two traps this does not remove
 
