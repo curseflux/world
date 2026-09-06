@@ -78,6 +78,16 @@ python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
 Writes `map.svg`, `true_vs_reconstructed.svg` (the Figure 3 layout),
 `reconstruction.json` and `invented_edges.json`.
 
+Then the same run as a curve, because a single precision or Jaccard number is a
+property of (model, sequence budget) rather than of the model:
+
+```bash
+python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
+    --samples world-model-evaluation-main/results/nyc10-random-walks/samples.txt \
+    --num-sequences 6400 --sweep \
+    --out-dir world-model-evaluation-main/results/nyc10-random-walks/map
+```
+
 ### 5. The matched noise control
 
 An absolute precision number means nothing on its own. Corrupt true traversals
@@ -95,10 +105,28 @@ python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
 ### Steps 3-5 in one go
 
 ```bash
-./gridworld/run_evals.sh nyc10-random-walks gridworld/maps/nyc10
+./gridworld/run_evals.sh nyc10-random-walks gridworld/maps/nyc10 [num-sequences]
 ```
 
-Runs every metric, samples, reconstructs, and derives the control rate itself.
+Runs every metric, samples from the model, reconstructs both point estimate and
+sweep, derives the control's error rate from the model's own, runs the control at
+the same rate *and* the same budget, and prints a summary ending in the number
+that matters:
+
+```
+  reconstructed edges      498 vs 170 true (ratio 2.93)
+  edge jaccard             0.290
+  impossible orientations  0.620
+  control jaccard          0.341 (same error rate and budget)
+
+  GAP vs control           -0.051
+```
+
+Each step is guarded: one metric failing does not stop the rest, and the
+reconstruction steps gate each other so a failed sampling run cannot cascade into
+a control run with no error rate to use. Failures are tallied at the end and
+recorded in `console.log`. For the paper's untrained reference row, re-run the
+metric scripts by hand with `--use-untrained-model`.
 
 ### Rendering maps on their own
 
@@ -208,7 +236,7 @@ become visible rather than merely counted.
 | `percent_valid_traversals` | `evaluate_traversal_capabilities.json` | 0.96 - 0.99 | Capability, not coherence. Can it route at all on unseen OD pairs. |
 | `compression_precision` | `compression_test.json` | 0.10 / 0.05 / 0.50 | **The headline diagnostic.** Two prefixes reaching the *same* state must accept the same continuations. This is where the paper's models fail hardest while scoring 1.00 on next-token. |
 | `distinction_precision`, `distinction_recall` | `distinction_test.json` | 0.35/0.20, 0.37/0.24, 0.99/1.00 | Two prefixes reaching *different* states must have distinguishing suffixes. Random walks pass this while still failing compression, which is why both are needed. |
-| `valid_traversal_rate` | `detour_analysis.json` | 0.99 -> 0.69 at p=0.01 (shortest paths) | **The consequence.** An incoherent map cannot re-route. The shortest-paths model loses a third of its traversals at a 1% detour rate. |
+| `valid_traversal_rate` | `detour_analysis-p<rate>.json` | 0.99 -> 0.69 at p=0.01 (shortest paths) | **The consequence.** An incoherent map cannot re-route. The shortest-paths model loses a third of its traversals at a 1% detour rate. |
 | `edge_jaccard` | `map/reconstruction.json` | (figures only) | **The "same map, no more and no less" number.** Reaches 1.0 only when the reconstructed edge set equals the true one exactly; every invented *and* every missed edge drives it down. This is the one to quote. |
 | `edge_count_ratio` | `map/reconstruction.json` | (figures only) | `\|E_reconstructed\| / \|E_true\|`. Says how badly and in which direction the edge budget is blown. 1.0 is right; 2.9 means the implied city has nearly three times the streets. |
 | `edge_precision`, `edge_recall`, `edge_f1` | `map/reconstruction.json` | (figures only) | The components. Recall saturates at 1.0 almost immediately, so F1 and Jaccard are both driven by precision here. |
@@ -286,15 +314,20 @@ rather than noise.
 ```
 world-model-evaluation-main/results/<data>/
     next_token_test.json  probe_test.json  compression_test.json
-    distinction_test.json  detour_analysis.json
+    distinction_test.json  detour_analysis-p<rate>.json
     evaluate_traversal_capabilities.json
+    console.log              everything the run printed, including failures
     samples.txt              sequences drawn from the trained model
-    map/reconstruction.json  edge precision and recall
+    map/reconstruction.json  every edge metric at the full budget
+    map/sweep.json           the same metrics at doubling sequence budgets
     map/map.svg              the reconstructed map
     map/true_vs_reconstructed.svg
-    map/invented_edges.json  every false edge, listed
-    map-control/             the same, from the matched noise control
+    map/invented_edges.json  every false edge, with its label and true bearing
+    map-control/             the same pair, from the matched noise control
 ```
+
+Detour results are one file per rate -- `detour_analysis-p0.01.json` and so on --
+since the script is invoked once per probability.
 
 ## Training settings
 
