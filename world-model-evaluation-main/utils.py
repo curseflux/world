@@ -1,4 +1,6 @@
 from collections import defaultdict
+import json
+import os
 from model import GPT2Model, SimpleTokenizer, TextDataset, collate_fn
 import numpy as np
 import random
@@ -24,7 +26,9 @@ def get_all_suffixes_from_state(start_state, end_state, seq_len, valid_turns, no
     if current_state == 'end':
       valid_moves = ['end']
     else:
-      valid_moves = valid_turns[current_state]
+      # list() matters: `valid_moves += ['end']` below would otherwise extend the
+      # list stored in valid_turns in place, permanently corrupting the DFA.
+      valid_moves = list(valid_turns[current_state])
       if current_state == end_state:
         valid_moves += ['end']
     for next_move in valid_moves:
@@ -141,7 +145,15 @@ def load_model(data, use_untrained_model=False):
   data_dir = f'data/{data}'
   model_dir = f'ckpts/{data}'
 
-  if data == 'shortest-paths':
+  # A dataset may ship its own architecture in model_config.json; this is what
+  # lets one dataset be trained at several sizes for a size sweep, and lets
+  # datasets other than the three original ones be loaded at all.
+  config_path = f'{data_dir}/model_config.json'
+  if os.path.exists(config_path):
+    with open(config_path) as f:
+      config = json.load(f)
+    num_layers, n_embd, n_head = config['n_layer'], config['n_embd'], config['n_head']
+  elif data == 'shortest-paths':
     num_layers, n_embd, n_head = 12, 768, 12
   elif data in ['noisy-shortest-paths', 'random-walks']:
     num_layers, n_embd, n_head = 48, 1600, 25
