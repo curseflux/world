@@ -199,6 +199,20 @@ edge's own *label*, so an edge labelled NW that runs east bulges northwest befor
 swinging back -- which is how "impossible physical orientations" and "flyovers"
 become visible rather than merely counted.
 
+### Every metric, and what it is worth
+
+| metric | file | paper's Manhattan values | what it tells you |
+| --- | --- | --- | --- |
+| `next_token_accuracy` | `next_token_test.json` | 1.00 / 1.00 / 1.00 | **Smoke test only.** Saturates for every trained model. This is the Connect-4 point of Section 2.2: a model that ignores state entirely can still be a near-perfect next-token predictor. Below ~0.95 means something is broken. |
+| `probe_accuracy` | `probe_test.json` | 0.91 / 0.92 / 0.99 (0.10 untrained) | **Not a world-model measure.** Linear decodability of the current intersection. Probe accuracy is invariant under any invertible linear map of the residual stream, so it constrains nothing about how states relate to each other. The untrained baseline of 0.10 over 4,580 classes shows how much comes free from the prefix. |
+| `percent_valid_traversals` | `evaluate_traversal_capabilities.json` | 0.96 - 0.99 | Capability, not coherence. Can it route at all on unseen OD pairs. |
+| `compression_precision` | `compression_test.json` | 0.10 / 0.05 / 0.50 | **The headline diagnostic.** Two prefixes reaching the *same* state must accept the same continuations. This is where the paper's models fail hardest while scoring 1.00 on next-token. |
+| `distinction_precision`, `distinction_recall` | `distinction_test.json` | 0.35/0.20, 0.37/0.24, 0.99/1.00 | Two prefixes reaching *different* states must have distinguishing suffixes. Random walks pass this while still failing compression, which is why both are needed. |
+| `valid_traversal_rate` | `detour_analysis.json` | 0.99 -> 0.69 at p=0.01 (shortest paths) | **The consequence.** An incoherent map cannot re-route. The shortest-paths model loses a third of its traversals at a 1% detour rate. |
+| `edge_precision`, `edge_recall` | `map/reconstruction.json` | (figures only) | How much of the true map the sequences imply, scored exactly rather than by eye. |
+| `impossible_orientation_rate` | `map/reconstruction.json` | (figures only) | Share of invented edges whose direction label disagrees with their actual bearing -- the paper's "physically impossible orientations", counted. |
+| `counter_model_accuracy` | `maps/<tag>/check_map.json` | n/a | A property of the *map*, not the model. Must stay low or the task is degenerate. |
+
 ### Reconstruction scoring
 
 ```
@@ -210,6 +224,26 @@ Precision falls as more sequences are reconstructed (each is another chance to
 invent an edge) while recall rises, so `--num-sequences` must match across any
 two runs you compare. Fed uncorrupted sequences the reconstruction returns
 exactly 1.0 on both, which is the pipeline's self-check.
+
+**Read precision against the control, never in absolute terms.** Corrupting just
+2% of direction tokens in *true* traversals already drops precision to ~0.35, so
+a model scoring 0.4 may be entirely reasonable. The quantity that means something
+is the gap:
+
+```
+edge_precision(model) - edge_precision(control at the model's own error rate)
+```
+
+Near zero means the model's map is no worse than random transcription noise at
+the same rate. Well below zero means its errors are structured -- an incoherent
+map rather than a noisy one. That is the comparison Figure 3 makes with its three
+panels, and `run_evals.sh` runs the control automatically.
+
+`impossible_orientation_rate` separates the two failure modes. Random token
+corruption puts it near 0.9, because a randomly relabelled edge is almost never
+geometrically consistent. A model that invents *geometrically sensible* streets
+that simply are not real would score much lower -- a coherent map of the wrong
+city, rather than noise.
 
 ---
 
