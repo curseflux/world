@@ -44,6 +44,10 @@ python "$HERE/reconstruct_map.py" --map-dir "$MAP_DIR" \
   --samples "$RESULTS/samples.txt" --num-sequences "$NSEQ" \
   --out-dir "$RESULTS/map" 2>&1 | tee -a "$RESULTS/console.log"
 
+python "$HERE/reconstruct_map.py" --map-dir "$MAP_DIR" \
+  --samples "$RESULTS/samples.txt" --num-sequences "$NSEQ" --sweep \
+  --out-dir "$RESULTS/map" 2>&1 | tee -a "$RESULTS/console.log"
+
 # Matched noise control: the true world model corrupted at the model's own error
 # rate. Without it the reconstruction numbers have nothing to be compared against.
 ERR=$(python - "$RESULTS/map/reconstruction.json" <<'PY'
