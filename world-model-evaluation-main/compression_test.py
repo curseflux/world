@@ -5,6 +5,7 @@ import pickle
 import torch
 import numpy as np
 import argparse
+from results_io import save_result
 from tqdm import tqdm
 from collections import defaultdict
 import pdb
@@ -78,3 +79,13 @@ for trial in bar:
     # Reasons for failure: sampled prefix gets stuck in sink, prefixes are the same, etc.
     pass
 
+if not state_pair_to_prefixes_to_score:
+  raise SystemExit(
+    "Every compression trial failed. The bare `except: pass` in the trial loop "
+    "hides the cause, so re-run with that clause removed to see the traceback.")
+
+save_result('compression_test', data,
+            {'compression_precision': float(mean_precision), 'std_error': float(std),
+             'num_states_scored': len(state_pair_to_prefixes_to_score),
+             'num_trials_requested': int(num_trials), 'epsilon': float(epsilon)},
+            use_untrained_model)

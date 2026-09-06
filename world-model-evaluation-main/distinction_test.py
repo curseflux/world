@@ -5,6 +5,7 @@ import pickle
 import torch
 import numpy as np
 import argparse
+from results_io import save_result
 from tqdm import tqdm
 from collections import defaultdict
 import pdb
@@ -125,3 +126,16 @@ for trial in bar:
     # Reasons for failure: sampled prefix gets stuck in sink, etc.
     pass
 
+if not state_pair_to_prefixes_to_precision:
+  raise SystemExit(
+    "Every distinction trial failed. The bare `except: pass` in the trial loop "
+    "hides the cause, so re-run with that clause removed to see the traceback.")
+
+save_result('distinction_test', data,
+            {'distinction_precision': float(mean_precision),
+             'distinction_precision_std_error': float(std_precision),
+             'distinction_recall': float(mean_recall),
+             'distinction_recall_std_error': float(std_recall),
+             'num_state_pairs_scored': len(state_pair_to_prefixes_to_precision),
+             'num_trials_requested': int(num_trials), 'epsilon': float(epsilon)},
+            use_untrained_model)

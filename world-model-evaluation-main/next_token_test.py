@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 import torch
 import numpy as np
 import argparse
+from results_io import save_result
 from tqdm import tqdm
 import pdb
 
@@ -55,3 +56,7 @@ for batch in bar:
   std = np.sqrt(p * (1 - p) / num_total)
   bar.set_description(f"Fraction successful: {p:.3f} ({std:.3f}) {num_success}/{num_total}")
 
+save_result('next_token_test', data,
+            {'next_token_accuracy': float(p), 'std_error': float(std),
+             'num_success': int(num_success), 'num_total': int(num_total)},
+            use_untrained_model)

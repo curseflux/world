@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 import torch
 import numpy as np
 import argparse
+from results_io import save_result
 from tqdm import tqdm
 import osmnx as ox
 import pdb
@@ -122,3 +123,14 @@ if data in ['shortest-paths', 'noisy-shortest-paths']:
   print(f"Percent within 10%: {percent_within_10:.3f} ({std_within_10:.3f})")
   print(f"Percent within 50%: {percent_within_50:.3f} ({std_within_50:.3f})")
 
+# The shortest-path comparisons only run for the shortest-paths dataset, so pull
+# them in only when they were computed.
+metrics = {'percent_valid_traversals': float(percent_valid_traversal),
+           'std_error': float(valid_traversal_std),
+           'num_sequences': int(total_nodes)}
+for key in ['percent_recover_shortest', 'percent_within_1', 'percent_within_5',
+            'percent_within_10', 'percent_within_50']:
+  if key in dir():
+    metrics[key] = float(eval(key))
+
+save_result('evaluate_traversal_capabilities', data, metrics, use_untrained_model)

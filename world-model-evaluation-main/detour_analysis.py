@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 import torch
 import numpy as np
 import argparse
+from results_io import save_result
 from tqdm import tqdm
 import pdb
 import pickle
@@ -98,4 +99,8 @@ for ind in bar:
   std = np.sqrt(success_rate*(1-success_rate)/total_nodes)
   bar.set_description(f"Fraction successful {data} ({detour_type} detours, p={detour_prob}): {success_rate:.3f} ({std:.3f})")
 
-
+save_result('detour_analysis', data,
+            {'valid_traversal_rate': float(success_rate), 'std_error': float(std),
+             'detour_prob': float(detour_prob), 'detour_type': detour_type,
+             'num_sequences': int(total_nodes)},
+            use_untrained_model)

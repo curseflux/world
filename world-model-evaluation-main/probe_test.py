@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 import torch
 import numpy as np
 import argparse
+from results_io import save_result
 from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
@@ -117,3 +118,8 @@ for epoch in bar:
       std = np.sqrt(p * (1 - p) / len(y_test))
       bar.set_description(f"Probe accuracy: {accuracy:.3f} ({std:.3f})")
 
+save_result('probe_test', data,
+            {'probe_accuracy': float(accuracy), 'std_error': float(std),
+             'num_classes': int(num_classes), 'num_test_points': int(len(y_test)),
+             'split': 'heldout' if args.use_heldout else 'train'},
+            use_untrained_model)
