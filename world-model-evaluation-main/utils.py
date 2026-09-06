@@ -161,7 +161,9 @@ def load_model(data, use_untrained_model=False):
     raise ValueError(f"Invalid data: {data}")
 
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-  tokenizer = torch.load(f"{data_dir}/tokenizer.pt")
+  # weights_only=False: tokenizer.pt holds a pickled SimpleTokenizer, not a state
+  # dict, so it cannot load under the torch>=2.6 default.
+  tokenizer = torch.load(f"{data_dir}/tokenizer.pt", weights_only=False)
 
   # Set seed
   torch.manual_seed(42)
@@ -173,7 +175,9 @@ def load_model(data, use_untrained_model=False):
 
   if not use_untrained_model:
     checkpoint_path = f"{model_dir}/model.ckpt"
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # Same reason: GPT2Model.save_hyperparameters() puts the tokenizer object
+    # inside the checkpoint, so this is not a pure state dict either.
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['state_dict'])
     del checkpoint
 

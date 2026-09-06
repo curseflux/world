@@ -33,6 +33,15 @@ class SimpleTokenizer:
         return ' '.join(self.id_to_word[id] for id in token_ids if id != self.pad_token_id)
 
 
+# torch>=2.6 defaults torch.load to weights_only=True, which refuses arbitrary
+# pickled classes. Our own torch.load calls pass weights_only=False, but Lightning
+# loads checkpoints through its own code path when resuming (trainer.fit
+# ckpt_path=...), and those checkpoints embed a SimpleTokenizer via
+# save_hyperparameters(). Allowlisting the class keeps that path working too.
+if hasattr(torch.serialization, "add_safe_globals"):
+    torch.serialization.add_safe_globals([SimpleTokenizer])
+
+
 class TextDataset(Dataset):
     def __init__(self, sequences):
         if isinstance(sequences, str):
