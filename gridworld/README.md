@@ -44,8 +44,14 @@ anything above ~0.3 as a map that is still too close to degenerate.
 ## Usage
 
 ```bash
-./build_all.sh nyc10 10 0 12 768 12      # tag, size, seed, n_layer, n_embd, n_head
+./build_all.sh nyc10 10 0 2.15 12 256 8   # tag, size, seed, density, n_layer, n_embd, n_head
 ```
+
+`density` is the target mean out-degree. The default 2.15 is Manhattan's own
+(9,846 edges over 4,580 intersections). Strong connectivity is a hard floor --
+every node needs an incoming and an outgoing edge -- so a low enough target
+cannot be met; `map_stats.json` reports the density actually achieved rather
+than silently returning a disconnected graph.
 
 That writes the map to `maps/<tag>/` and three datasets to
 `../world-model-evaluation-main/data/<tag>-{shortest,noisy-shortest,random-walks}/`,
@@ -86,6 +92,61 @@ stopping turns the question into one you do not have to answer in advance.
 
 Sequences here are at most 43 tokens against GPT-2's 1024-position default, and
 the vocabulary is ~110 tokens, so large batches are cheap.
+
+## The maps are directed, and that is not cosmetic
+
+Manhattan's graph is directed, and the paper's figures do show direction -- just
+not with arrowheads. Four independent confirmations:
+
+* Section 3.1 defines the labelling as `D: V x V -> {., N, S, E, W, NE, NW, SE, SW}`,
+  a function on *ordered* pairs, and states "each intersection has at most one
+  edge in each direction".
+* Footnote 2: "if a turn is only valid from one direction, it is represented as
+  two different nodes" -- a note that only makes sense for one-way streets.
+* The code is directed throughout: `get_all_possible_pairs.py` builds an
+  `nx.DiGraph`, `make_graphs.build_true_graph` an `nx.MultiDiGraph`, and the data
+  comes from `osmnx.graph_from_place(..., network_type="drive")`, which respects
+  one-way streets.
+* The Figure 9 caption: false edges are "red with a darkening gradient
+  indicating the directionality of the edge".
+
+So direction stays. Making the grid undirected would delete one-way streets --
+a defining feature of Manhattan -- collapse the DFA into a symmetric one, and
+make detour re-routing trivial, since every wrong turn could simply be undone.
+
+What was worth fixing is the *drawing*. Arrowheads on a few hundred edges bury
+the signal, and the paper does not use them. `render.py` now follows
+`mapping/make_maps.py` exactly:
+
+| edge | drawn as |
+| --- | --- |
+| true, used by the reconstruction | straight, thin, black, no direction shown |
+| false, invented by the reconstruction | **curved**, with a lightsalmon -> firebrick gradient running source to target |
+| true, never used | skipped (`continue` in the paper's `make_map`) -- pass `--show-unused` to draw them |
+
+The curve carries the other half of the paper's argument. Its Bezier control
+point leans in the direction of the edge's own *label*, so an edge labelled NW
+that actually runs east bulges northwest before swinging back. That is how
+"streets with impossible physical orientations" and "flyovers above other
+streets" become visible instead of merely counted.
+
+## Rendering the maps
+
+```bash
+# the true map on its own
+python render_map.py --map-dir maps/nyc10 --out maps/nyc10/true_map.svg
+
+# reconstructed map, plus a Figure 3-style true-vs-reconstructed pair
+python reconstruct_map.py --map-dir maps/nyc10 \
+    --samples ../world-model-evaluation-main/results/<data>/samples.txt \
+    --out-dir ../world-model-evaluation-main/results/<data>/map
+
+# same thing for the noise control, no trained model needed
+python reconstruct_map.py --map-dir maps/nyc10 --corrupt 0.02 --out-dir /tmp/control
+```
+
+`reconstruct_map.py` writes `map.svg` and `true_vs_reconstructed.svg` side by
+side; `build_all.sh` renders the true map automatically.
 
 ## Where results go
 
@@ -144,7 +205,9 @@ recall of exactly 1.0, which is the pipeline's self-check.
 | `generate_sequences.py` | shortest / noisy-shortest / random-walks datasets per Appendix F, split by OD pair |
 | `validate_dataset.py` | every sequence legal, no OD-pair leakage, node and edge coverage |
 | `sample_from_model.py` | draws traversals from a trained model, no osmnx |
-| `reconstruct_map.py` | reconstructs the implied map, scores edge precision/recall, renders SVG |
+| `reconstruct_map.py` | reconstructs the implied map, scores edge precision/recall, renders both SVGs |
+| `render_map.py` | renders the true map on its own |
+| `render.py` | shared renderer, following the paper's figure convention |
 | `run_evals.sh` | runs every metric plus reconstruction and the matched control |
 
 ## Two traps this does not remove

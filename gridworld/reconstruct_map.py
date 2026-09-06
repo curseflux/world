@@ -38,6 +38,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import networkx as nx
 import reconstruction
 
+import render
+
 
 def load_map(map_dir):
     with open(f"{map_dir}/valid_turns.pkl", "rb") as f:
@@ -109,69 +111,6 @@ def score(reconstructed):
     }, invented
 
 
-def render_svg(reconstructed, coords, metrics, title, path, cell=64, pad=44):
-    rows = max(r for r, _ in coords.values()) + 1
-    cols = max(c for _, c in coords.values()) + 1
-    width, height = cols * cell + 2 * pad, rows * cell + 2 * pad + 34
-
-    def xy(node):
-        r, c = coords[node]
-        return pad + c * cell, pad + r * cell + 34
-
-    style = {"true": ("#1f2933", 1.7, 1.0),
-             "true_unused": ("#c3cbd4", 1.4, 1.0),
-             "new": ("#d7263d", 2.0, 0.95)}
-    layer = {"true_unused": 0, "true": 1, "new": 2}
-
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {width} {height}" font-family="ui-sans-serif,system-ui,sans-serif">',
-        f'<rect width="{width}" height="{height}" fill="#ffffff"/>',
-        '<defs>',
-    ]
-    for kind, (color, _, _) in style.items():
-        parts.append(
-            f'<marker id="a-{kind}" viewBox="0 0 10 10" refX="9" refY="5" '
-            f'markerWidth="5" markerHeight="5" orient="auto-start-reverse">'
-            f'<path d="M0,0 L10,5 L0,10 z" fill="{color}"/></marker>')
-    parts.append('</defs>')
-    parts.append(f'<text x="{pad}" y="24" font-size="15" fill="#1f2933">{title}</text>')
-
-    edges = sorted(reconstructed.out_edges(keys=True, data=True),
-                   key=lambda e: layer.get(e[3]["edge_type"], 0))
-    for u, v, _, data in edges:
-        color, stroke, opacity = style.get(data["edge_type"], ("#999", 1, 1))
-        x1, y1 = xy(u)
-        x2, y2 = xy(v)
-        # Stop short of the node so the arrowhead stays readable.
-        dx, dy = x2 - x1, y2 - y1
-        norm = math.hypot(dx, dy) or 1
-        x1, y1 = x1 + 5 * dx / norm, y1 + 5 * dy / norm
-        x2, y2 = x2 - 8 * dx / norm, y2 - 8 * dy / norm
-        parts.append(
-            f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-            f'stroke="{color}" stroke-width="{stroke}" opacity="{opacity}" '
-            f'marker-end="url(#a-{data["edge_type"]})"/>')
-    for node in coords:
-        x, y = xy(node)
-        parts.append(f'<circle cx="{x}" cy="{y}" r="3.4" fill="#ffffff" '
-                     f'stroke="#52606d" stroke-width="1.2"/>')
-
-    legend = [("#1f2933", f"recovered true edge ({metrics['true_edges_recovered']})"),
-              ("#d7263d", f"invented false edge ({metrics['false_edges_invented']})"),
-              ("#c3cbd4", f"true edge never used ({metrics['true_edges_never_used']})")]
-    for i, (color, label) in enumerate(legend):
-        y = height - pad + 14 + i * 15
-        parts.append(f'<line x1="{pad}" y1="{y - 4}" x2="{pad + 22}" y2="{y - 4}" '
-                     f'stroke="{color}" stroke-width="2.4"/>')
-        parts.append(f'<text x="{pad + 30}" y="{y}" font-size="11.5" '
-                     f'fill="#52606d">{label}</text>')
-
-    parts.append('</svg>')
-    with open(path, "w") as f:
-        f.write("\n".join(parts))
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -186,6 +125,9 @@ def main():
     parser.add_argument("--max-distance", type=float, default=0.0,
                         help="0 uses the length of the longest true edge")
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--show-unused", action="store_true",
+                        help="also draw true edges the reconstruction never used. The "
+                             "paper's make_map skips these, so the default does too.")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -218,7 +160,11 @@ def main():
     if not sequences:
         raise SystemExit("no usable sequences; check the samples file format")
 
+    for edge in true_graph.edges(keys=True):
+        true_graph.edges[edge]["edge_type"] = "true"
     reconstructed = true_graph.copy()
+    for edge in reconstructed.edges(keys=True):
+        reconstructed.edges[edge]["edge_type"] = "true_unused"
     neighbours = lambda graph, node: [
         other for other in graph.nodes
         if math.dist(coords[node], coords[other]) <= max_distance]
@@ -243,12 +189,22 @@ def main():
         json.dump([{"from": u, "to": v, "direction": d} for u, v, d in invented], f, indent=2)
     with open(f"{args.out_dir}/reconstructed_graph.pkl", "wb") as f:
         pickle.dump(reconstructed, f)
-    title = (f"precision {metrics['edge_precision']:.3f}  "
-             f"recall {metrics['edge_recall']:.3f}  -  {source}")
-    render_svg(reconstructed, coords, metrics, title, f"{args.out_dir}/map.svg")
+    subtitle = (f"precision {metrics['edge_precision']:.3f}   "
+                f"recall {metrics['edge_recall']:.3f}   "
+                f"{metrics['false_edges_invented']} false edges   -   {source}")
+    render.render(reconstructed, coords, f"{args.out_dir}/map.svg",
+                  title="Reconstructed map", subtitle=subtitle,
+                  show_unused=args.show_unused)
+    render.render_pair(
+        true_graph, reconstructed, coords, f"{args.out_dir}/true_vs_reconstructed.svg",
+        left_title="True world model",
+        left_sub=f"{true_graph.number_of_edges()} edges",
+        right_title="Reconstructed from sequences", right_sub=subtitle,
+        show_unused=args.show_unused)
 
     print(json.dumps(metrics, indent=2))
     print(f"-> {args.out_dir}/map.svg")
+    print(f"-> {args.out_dir}/true_vs_reconstructed.svg")
 
 
 if __name__ == "__main__":

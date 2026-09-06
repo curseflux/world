@@ -165,7 +165,7 @@ class MapBuilder:
                 r, c = self.coords[target]
         return added
 
-    def make_one_way(self, probability):
+    def make_one_way(self, probability, floor=0):
         """Drop the reverse of some bidirectional pairs, keeping connectivity."""
         pairs = set()
         for u in self.nodes:
@@ -175,6 +175,8 @@ class MapBuilder:
         self.rng.shuffle(pairs)
         removed = 0
         for u, v in pairs:
+            if floor and self.edge_count() <= floor:
+                break
             if self.rng.random() >= probability:
                 continue
             a, b = (u, v) if self.rng.random() < 0.5 else (v, u)
@@ -186,14 +188,28 @@ class MapBuilder:
     def _has_reverse(self, a, b):
         return self.out_edges[b].get(bearing(self.coords[b], self.coords[a])) == a
 
-    def delete_edges(self, probability):
+    def edge_count(self):
+        return sum(len(v) for v in self.out_edges.values())
+
+    def thin_to_density(self, target):
+        """Delete edges at random, connectivity permitting, down to a target
+        mean out-degree.
+
+        Strong connectivity is a hard floor: every node needs an outgoing and an
+        incoming edge, so a low enough target simply cannot be met and the caller
+        is told the density actually achieved rather than being given a
+        disconnected graph.
+        """
+        goal = target * len(self.nodes)
         candidates = [(u, d) for u in sorted(self.nodes) for d in sorted(self.out_edges[u])]
         self.rng.shuffle(candidates)
-        return sum(
-            self.try_remove(u, d)
-            for u, d in candidates
-            if self.rng.random() < probability
-        )
+        removed = 0
+        for u, direction in candidates:
+            if self.edge_count() <= goal:
+                break
+            if direction in self.out_edges[u] and self.try_remove(u, direction):
+                removed += 1
+        return removed
 
     def export(self):
         valid_turns = {u: sorted(self.out_edges[u]) for u in sorted(self.nodes)}
@@ -203,16 +219,18 @@ class MapBuilder:
         return valid_turns, node_and_direction_to_neighbor
 
 
-def build(size=10, seed=0, p_long=0.50, p_oneway=0.40, p_delete=0.18,
+def build(size=10, seed=0, p_long=0.50, p_oneway=0.40, density=2.15,
           n_diagonals=8, max_skip=3, vanilla=False):
     builder = MapBuilder(size, random.Random(seed))
     builder.build_lattice()
     stats = {"size": size, "seed": seed, "vanilla": vanilla}
     if not vanilla:
+        floor = density * len(builder.nodes)
         stats["diagonal_edges"] = builder.add_diagonals(n_diagonals, max_skip)
         stats["long_edges"] = builder.add_long_edges(p_long, max_skip)
-        stats["oneway_removals"] = builder.make_one_way(p_oneway)
-        stats["deletions"] = builder.delete_edges(p_delete)
+        stats["oneway_removals"] = builder.make_one_way(p_oneway, floor)
+        stats["deletions"] = builder.thin_to_density(density)
+        stats["target_density"] = density
 
     valid_turns, node_and_direction_to_neighbor = builder.export()
     assert is_strongly_connected(builder.out_edges, builder.nodes), "graph must be strongly connected"
@@ -236,7 +254,11 @@ def main():
     parser.add_argument("--p-long", type=float, default=0.50,
                         help="fraction of edges re-pointed to a 2..max-skip hop")
     parser.add_argument("--p-oneway", type=float, default=0.40)
-    parser.add_argument("--p-delete", type=float, default=0.18)
+    parser.add_argument("--density", type=float, default=2.15,
+                        help="target mean out-degree. Default 2.15 is Manhattan's own "
+                             "(9,846 edges over 4,580 nodes). Strong connectivity puts "
+                             "a floor under this; map_stats.json reports what was "
+                             "actually achieved.")
     parser.add_argument("--n-diagonals", type=int, default=8)
     parser.add_argument("--max-skip", type=int, default=3)
     parser.add_argument("--vanilla", action="store_true",
@@ -246,7 +268,7 @@ def main():
 
     coords, valid_turns, n2n, stats = build(
         size=args.size, seed=args.seed, p_long=args.p_long, p_oneway=args.p_oneway,
-        p_delete=args.p_delete, n_diagonals=args.n_diagonals, max_skip=args.max_skip,
+        density=args.density, n_diagonals=args.n_diagonals, max_skip=args.max_skip,
         vanilla=args.vanilla)
 
     import os

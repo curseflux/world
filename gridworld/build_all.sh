@@ -1,29 +1,34 @@
 #!/usr/bin/env bash
 # Build one grid world and all three traversal datasets, then validate them.
 #
-#   ./build_all.sh <tag> [size] [seed] [n_layer] [n_embd] [n_head]
+#   ./build_all.sh <tag> [size] [seed] [density] [n_layer] [n_embd] [n_head]
+#
+# density is the target mean out-degree; 2.15 is Manhattan's own.
 #
 # Writes the map to gridworld/maps/<tag>/ and datasets to
 # world-model-evaluation-main/data/<tag>-{shortest,noisy-shortest,random-walks}/
 # so the paper's own eval scripts pick them up via their --data flag.
 set -euo pipefail
 
-TAG="${1:?usage: build_all.sh <tag> [size] [seed] [n_layer] [n_embd] [n_head]}"
+TAG="${1:?usage: build_all.sh <tag> [size] [seed] [density] [n_layer] [n_embd] [n_head]}"
 SIZE="${2:-10}"
 SEED="${3:-0}"
+DENSITY="${4:-2.15}"
 # Depth over width: NextLat (App. F.1) reports depth helping state
 # tracking substantially and width negligibly, and 768 dims is far more
 # than a 100-node map needs.
-N_LAYER="${4:-12}"
-N_EMBD="${5:-256}"
-N_HEAD="${6:-8}"
+N_LAYER="${5:-12}"
+N_EMBD="${6:-256}"
+N_HEAD="${7:-8}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAP_DIR="$HERE/maps/$TAG"
 DATA_ROOT="$HERE/../world-model-evaluation-main/data"
 
-echo "== building map: size=${SIZE} seed=${SEED} =="
-python3 "$HERE/build_map.py" --size "$SIZE" --seed "$SEED" --out "$MAP_DIR"
+echo "== building map: size=${SIZE} seed=${SEED} density=${DENSITY} =="
+python3 "$HERE/build_map.py" --size "$SIZE" --seed "$SEED" \
+  --density "$DENSITY" --out "$MAP_DIR"
+python3 "$HERE/render_map.py" --map-dir "$MAP_DIR" --out "$MAP_DIR/true_map.svg"
 python3 "$HERE/check_map.py" --map-dir "$MAP_DIR" | tee "$MAP_DIR/check_map.json"
 
 for MODE in shortest noisy-shortest random-walks; do
