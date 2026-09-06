@@ -53,7 +53,8 @@ validating each. Then, from `world-model-evaluation-main/`:
 
 ```bash
 python train.py --data nyc10-random-walks --model_name nyc10-random-walks \
-    --num_layers 12 --n_embd 768 --n_head 12
+    --num_layers 12 --n_embd 256 --n_head 8 \
+    --batch_size_per_gpu 512 --eval_every 0.5 --early_stopping_patience 5
 python next_token_test.py  --data nyc10-random-walks
 python probe_test.py       --data nyc10-random-walks --use-heldout
 python compression_test.py --data nyc10-random-walks
@@ -64,6 +65,27 @@ python detour_analysis.py  --data nyc10-random-walks
 Model size is read per-dataset from `data/<name>/model_config.json`, so the same
 map can be trained at several sizes by generating the dataset once per
 configuration (or by editing that file).
+
+## Training settings
+
+The repo's defaults are tuned for Manhattan: 1.5B-parameter models, 4.7B tokens,
+8 A100s. They are badly wrong for a 100-node map, and the batch size is the one
+that hurts.
+
+| knob | repo default | use instead | why |
+| --- | --- | --- | --- |
+| `--batch_size_per_gpu` | 6 | 256-512 | 6 gives ~62k steps/epoch on 370k random-walk sequences; 512 gives ~720. This is the ~85x, not the epoch count. |
+| `--n_embd` | 768 | 256 | 12x768 is ~85M params against 9.5M training tokens. Cut width, keep depth. |
+| `--eval_every` | 5000 | 0.5 | An int above the steps in an epoch is rejected by Lightning, so 5000 *crashes* once the batch size is sane. A fraction means "portion of an epoch". |
+| `--max_epochs` | 25 | leave it | Set `--early_stopping_patience 5` instead and let val_loss decide. |
+
+`--max_epochs 25` is not the reason training is slow, and lowering it is not the
+fix. `ModelCheckpoint` already monitors `val_loss` with `save_top_k=1`, so extra
+epochs never worsen the checkpoint you keep -- they only cost wall-clock. Early
+stopping turns the question into one you do not have to answer in advance.
+
+Sequences here are at most 43 tokens against GPT-2's 1024-position default, and
+the vocabulary is ~110 tokens, so large batches are cheap.
 
 ## Scripts
 

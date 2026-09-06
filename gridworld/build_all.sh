@@ -11,9 +11,12 @@ set -euo pipefail
 TAG="${1:?usage: build_all.sh <tag> [size] [seed] [n_layer] [n_embd] [n_head]}"
 SIZE="${2:-10}"
 SEED="${3:-0}"
+# Depth over width: NextLat (App. F.1) reports depth helping state
+# tracking substantially and width negligibly, and 768 dims is far more
+# than a 100-node map needs.
 N_LAYER="${4:-12}"
-N_EMBD="${5:-768}"
-N_HEAD="${6:-12}"
+N_EMBD="${5:-256}"
+N_HEAD="${6:-8}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAP_DIR="$HERE/maps/$TAG"
@@ -36,4 +39,8 @@ done
 echo
 echo "Done. Train with, from world-model-evaluation-main/:"
 echo "  python train.py --data ${TAG}-random-walks --model_name ${TAG}-random-walks \\"
-echo "      --num_layers ${N_LAYER} --n_embd ${N_EMBD} --n_head ${N_HEAD}"
+echo "      --num_layers ${N_LAYER} --n_embd ${N_EMBD} --n_head ${N_HEAD} \\"
+echo "      --batch_size_per_gpu 512 --eval_every 0.5 --early_stopping_patience 5"
+echo
+echo "The batch size matters most: the repo default of 6 is tuned for 1.5B models"
+echo "on 8 A100s and gives ~85x more steps per epoch than this dataset needs."

@@ -2,7 +2,7 @@ import torch
 import os
 from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import LightningModule, LightningDataModule, Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.accelerators import find_usable_cuda_devices
 from pytorch_lightning.loggers import WandbLogger
 from model import SimpleTokenizer, TextDataset, GPT2Model, collate_fn
@@ -22,8 +22,12 @@ def get_args():
                         help='Number of attention heads')
     parser.add_argument('--batch_size_per_gpu', type=int, default=6,
                         help='Batch size per GPU')
-    parser.add_argument('--eval_every', type=int, default=5000,
-                        help='Evaluation frequency in steps')
+    parser.add_argument('--eval_every', type=float, default=5000,
+                        help='Validation frequency. >=1 is a number of steps; a '
+                             'fraction in (0, 1) is a portion of an epoch (1.0 = '
+                             'once per epoch). Use a fraction on small datasets: an '
+                             'int larger than the steps in an epoch is rejected by '
+                             'Lightning.')
     parser.add_argument('--data', type=str, default='shortest-paths',
                         help='Dataset name (one of "shortest-paths", '
                              '"random-walks", "noisy-graphs")')
@@ -33,6 +37,10 @@ def get_args():
                         help='Maximum number of epochs')
     parser.add_argument('--use_wandb', type=bool, default=False,
                         help='Whether to use Weights & Biases logging')
+    parser.add_argument('--early_stopping_patience', type=int, default=0,
+                        help='Stop after this many validation checks without a '
+                             'val_loss improvement. 0 disables it, which is the '
+                             'original behaviour of running the full max_epochs.')
     return parser.parse_args()
 
 
@@ -49,7 +57,9 @@ class DataModule(LightningDataModule):
         shard_dir = os.path.join(self.data_dir, f'{self.num_shards}-shards')
         if os.path.exists(shard_dir):
             print("Loading existing tokenizer...")
-            self.tokenizer = torch.load(f"{self.data_dir}/tokenizer.pt")
+            # weights_only=False: tokenizer.pt holds a pickled SimpleTokenizer,
+            # not a state dict, so it cannot load under the torch>=2.6 default.
+            self.tokenizer = torch.load(f"{self.data_dir}/tokenizer.pt", weights_only=False)
             print("...done!")
         else:
             print("Loading datasets...")
@@ -57,8 +67,7 @@ class DataModule(LightningDataModule):
                 train_sequences = f.read().split("\n")
             with open(f"{self.data_dir}/heldout_sequences.txt", "r") as f:
                 heldout_sequences = f.read().split("\n")
-            with open(f"{self.data_dir}/tokenizer.pt", "rb") as f:
-                tokenizer = torch.load(f"{self.data_dir}/tokenizer.pt")
+            tokenizer = torch.load(f"{self.data_dir}/tokenizer.pt", weights_only=False)
 
             # Validate on 1000 heldout sequences during training
             heldout_subsample_size = 1000
@@ -131,14 +140,23 @@ def main():
         save_last=True
     )
 
+    callbacks = [checkpoint_callback]
+    if args.early_stopping_patience > 0:
+        callbacks.append(EarlyStopping(monitor="val_loss", mode="min",
+                                       patience=args.early_stopping_patience))
+
+    # An int val_check_interval must not exceed the batches in an epoch; a float
+    # is a fraction of one. See the --eval_every help text.
+    eval_interval = int(args.eval_every) if args.eval_every >= 1 else args.eval_every
+
     trainer = Trainer(
         max_epochs=args.max_epochs,
-        callbacks=[checkpoint_callback],
+        callbacks=callbacks,
         accelerator='gpu',
         precision="16-mixed",
         devices=num_gpus,
         logger=wandb_logger if args.use_wandb else None,
-        val_check_interval=args.eval_every,
+        val_check_interval=eval_interval,
         use_distributed_sampler=False,  
     )
 
