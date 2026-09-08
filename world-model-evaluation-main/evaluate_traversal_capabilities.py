@@ -16,11 +16,16 @@ ox.settings.overpass_settings = f'[out:json][timeout:180][date:"{historical_date
 parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='shortest-paths')
 parser.add_argument('--use-untrained-model', action='store_true')
+parser.add_argument('--run', type=str, default=None,
+                    help='Name of the trained run: checkpoints are read from '
+                         'ckpts/<run>/ and results written to results/<run>/. '
+                         'Defaults to --data, i.e. one model per dataset. Use it '
+                         'to keep several architectures on one dataset apart.')
 args = parser.parse_args()
 data = args.data
 use_untrained_model = args.use_untrained_model
 
-model = load_model(data, use_untrained_model=use_untrained_model)
+model = load_model(data, use_untrained_model=use_untrained_model, run=args.run)
 tokenizer = model.tokenizer
 valid_turns = tokenizer.valid_turns
 node_and_direction_to_neighbor = tokenizer.node_and_direction_to_neighbor
@@ -133,4 +138,5 @@ for key in ['percent_recover_shortest', 'percent_within_1', 'percent_within_5',
   if key in dir():
     metrics[key] = float(eval(key))
 
-save_result('evaluate_traversal_capabilities', data, metrics, use_untrained_model)
+save_result('evaluate_traversal_capabilities', data, metrics, use_untrained_model,
+            run=args.run, architecture=model.architecture)

@@ -142,63 +142,107 @@ def is_valid_sequence(sample, valid_turns, node_and_direction_to_neighbor):
   return False
 
 
-def load_model(data, use_untrained_model=False):
-  data_dir = f'data/{data}'
-  model_dir = f'ckpts/{data}'
+def find_checkpoint(model_dir):
+  """Newest real checkpoint in model_dir, or None.
 
-  # A dataset may ship its own architecture in model_config.json; this is what
-  # lets one dataset be trained at several sizes for a size sweep, and lets
-  # datasets other than the three original ones be loaded at all.
-  config_path = f'{data_dir}/model_config.json'
-  if os.path.exists(config_path):
-    with open(config_path) as f:
-      config = json.load(f)
-    num_layers, n_embd, n_head = config['n_layer'], config['n_embd'], config['n_head']
-  elif data == 'shortest-paths':
-    num_layers, n_embd, n_head = 12, 768, 12
-  elif data in ['noisy-shortest-paths', 'random-walks']:
-    num_layers, n_embd, n_head = 48, 1600, 25
-  else:
-    raise ValueError(f"Invalid data: {data}")
+  ModelCheckpoint writes "{epoch}-{step}.ckpt" plus last.ckpt, never the
+  "model.ckpt" the original code demanded, so resolve rather than require a
+  rename. An explicit model.ckpt still wins.
+  """
+  explicit = f"{model_dir}/model.ckpt"
+  if os.path.exists(explicit):
+    return explicit
+  candidates = sorted(
+    (f for f in glob.glob(f"{model_dir}/*.ckpt") if not f.endswith("last.ckpt")),
+    key=os.path.getmtime)
+  if candidates:
+    return candidates[-1]
+  last = f"{model_dir}/last.ckpt"
+  return last if os.path.exists(last) else None
+
+
+def resolve_architecture(data, run, checkpoint=None):
+  """Where a run's layers/width/heads come from, most trustworthy first.
+
+  1. the checkpoint's own hyper_parameters, saved by save_hyperparameters(). A
+     config file can drift from the weights it claims to describe; this cannot,
+     so a run always loads at the shape it was trained at.
+  2. ckpts/<run>/model_config.json, written by train.py -- the untrained
+     baseline for a run has no checkpoint to read.
+  3. data/<data>/model_config.json, the dataset's default architecture.
+  4. the original hardcoded sizes, for the three Manhattan datasets.
+  """
+  if checkpoint and checkpoint.get('hyper_parameters'):
+    hyper = checkpoint['hyper_parameters']
+    if all(k in hyper for k in ('n_layer', 'n_embd', 'n_head')):
+      return {k: hyper[k] for k in ('n_layer', 'n_embd', 'n_head')}, 'checkpoint'
+
+  for source, path in (('run config', f'ckpts/{run}/model_config.json'),
+                       ('dataset config', f'data/{data}/model_config.json')):
+    if os.path.exists(path):
+      with open(path) as f:
+        config = json.load(f)
+      if all(k in config for k in ('n_layer', 'n_embd', 'n_head')):
+        return {k: config[k] for k in ('n_layer', 'n_embd', 'n_head')}, source
+
+  if data == 'shortest-paths':
+    return {'n_layer': 12, 'n_embd': 768, 'n_head': 12}, 'paper default'
+  if data in ['noisy-shortest-paths', 'random-walks']:
+    return {'n_layer': 48, 'n_embd': 1600, 'n_head': 25}, 'paper default'
+  raise ValueError(
+    f"No architecture for data={data!r} run={run!r}. Train it first, or add "
+    f"model_config.json under ckpts/{run}/ or data/{data}/.")
+
+
+def load_model(data, use_untrained_model=False, run=None):
+  """Load the model for one run.
+
+  `data` names the dataset (tokenizer, sequences); `run` names the trained model
+  (checkpoints, architecture). They are separate so several architectures can be
+  trained on one dataset without overwriting each other. `run` defaults to `data`,
+  which is the original one-model-per-dataset behaviour.
+  """
+  run = run or data
+  data_dir = f'data/{data}'
+  model_dir = f'ckpts/{run}'
 
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
   # weights_only=False: tokenizer.pt holds a pickled SimpleTokenizer, not a state
   # dict, so it cannot load under the torch>=2.6 default.
   tokenizer = torch.load(f"{data_dir}/tokenizer.pt", weights_only=False)
 
-  # Set seed
-  torch.manual_seed(42)
-  model = GPT2Model(tokenizer, 
-                    vocab_size=len(tokenizer.word_to_id),
-                    n_embd=n_embd,
-                    n_layer=num_layers,
-                    n_head=n_head,)
-
+  checkpoint = None
   if not use_untrained_model:
-    # ModelCheckpoint writes "{epoch}-{step}.ckpt" plus last.ckpt, never
-    # "model.ckpt", so resolve the best available checkpoint rather than
-    # requiring the user to rename one by hand. Explicit model.ckpt still wins.
-    checkpoint_path = f"{model_dir}/model.ckpt"
-    if not os.path.exists(checkpoint_path):
-      candidates = sorted(
-        (f for f in glob.glob(f"{model_dir}/*.ckpt") if not f.endswith("last.ckpt")),
-        key=os.path.getmtime)
-      if not candidates and os.path.exists(f"{model_dir}/last.ckpt"):
-        candidates = [f"{model_dir}/last.ckpt"]
-      if not candidates:
-        raise FileNotFoundError(
-          f"No checkpoint in {model_dir}/. Train with --model_name {data} so the "
-          f"checkpoints land where the eval scripts look for them.")
-      checkpoint_path = candidates[-1]
-      print(f"Loading checkpoint {checkpoint_path}")
+    checkpoint_path = find_checkpoint(model_dir)
+    if checkpoint_path is None:
+      raise FileNotFoundError(
+        f"No checkpoint in {model_dir}/. Train this run first, or pass "
+        f"--use-untrained-model. If you trained it under a different name, pass "
+        f"--run <that name>.")
     # Same reason: GPT2Model.save_hyperparameters() puts the tokenizer object
     # inside the checkpoint, so this is not a pure state dict either.
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    print(f"Loading checkpoint {checkpoint_path}")
+
+  architecture, source = resolve_architecture(data, run, checkpoint)
+  print(f"Run {run!r}: {architecture['n_layer']} layers, {architecture['n_embd']} "
+        f"dims, {architecture['n_head']} heads (from {source})")
+
+  # Set seed
+  torch.manual_seed(42)
+  model = GPT2Model(tokenizer,
+                    vocab_size=len(tokenizer.word_to_id),
+                    n_embd=architecture['n_embd'],
+                    n_layer=architecture['n_layer'],
+                    n_head=architecture['n_head'],)
+
+  if checkpoint is not None:
     model.load_state_dict(checkpoint['state_dict'])
     del checkpoint
 
   model.to(device)
   model.eval()
+  model.architecture = architecture
   return model
 
 

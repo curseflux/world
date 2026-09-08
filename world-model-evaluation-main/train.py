@@ -4,9 +4,10 @@ from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.accelerators import find_usable_cuda_devices
-from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.loggers import CSVLogger, WandbLogger
 from model import SimpleTokenizer, TextDataset, GPT2Model, collate_fn
 import wandb
+import json
 import numpy as np
 import pickle
 import argparse
@@ -31,8 +32,13 @@ def get_args():
     parser.add_argument('--data', type=str, default='shortest-paths',
                         help='Dataset name (one of "shortest-paths", '
                              '"random-walks", "noisy-graphs")')
-    parser.add_argument('--model_name', type=str, default='tmp',
-                        help='Name of the model (for saving and logging)')
+    parser.add_argument('--model_name', type=str, default=None,
+                        help='Run name. Checkpoints go to ckpts/<model_name>/ and '
+                             'logs to ckpts/<model_name>/logs/; pass the same name '
+                             'to the eval scripts as --run. Defaults to '
+                             '<data>-L<layers>-E<embd>-H<heads>, so sweeping an '
+                             'architecture on one dataset never overwrites a '
+                             'previous run.')
     parser.add_argument('--max_epochs', type=int, default=25,
                         help='Maximum number of epochs')
     parser.add_argument('--use_wandb', type=bool, default=False,
@@ -119,15 +125,32 @@ class DataModule(LightningDataModule):
 
 def main():
     args = get_args()
+    if args.model_name is None:
+        args.model_name = (f"{args.data}-L{args.num_layers}"
+                           f"-E{args.n_embd}-H{args.n_head}")
+        print(f"Run name: {args.model_name}")
     torch.set_float32_matmul_precision('medium')
     num_gpus = find_usable_cuda_devices()
 
     batch_size = args.batch_size_per_gpu * len(num_gpus)
 
-    if args.use_wandb:
-        wandb_logger = WandbLogger(log_model=None, project='world-model-taxis', name=args.model_name)
-
     model_dir = f'ckpts/{args.model_name}'
+    os.makedirs(model_dir, exist_ok=True)
+
+    # Record the architecture beside the weights so an untrained baseline for this
+    # run, and compare_runs.py, can find it without a checkpoint to read.
+    with open(f'{model_dir}/model_config.json', 'w') as f:
+        json.dump({'n_layer': args.num_layers, 'n_embd': args.n_embd,
+                   'n_head': args.n_head, 'data': args.data,
+                   'batch_size_per_gpu': args.batch_size_per_gpu}, f, indent=2)
+
+    if args.use_wandb:
+        logger = WandbLogger(log_model=None, project='world-model-taxis', name=args.model_name)
+    else:
+        # Default to a per-run CSV log. Without this Lightning drops every run's
+        # metrics into a shared lightning_logs/ in the working directory.
+        logger = CSVLogger(save_dir=model_dir, name='logs')
+
     last_checkpoint = f"{model_dir}/last.ckpt"
     resume_checkpoint = last_checkpoint if os.path.exists(last_checkpoint) else None
 
@@ -155,7 +178,7 @@ def main():
         accelerator='gpu',
         precision="16-mixed",
         devices=num_gpus,
-        logger=wandb_logger if args.use_wandb else None,
+        logger=logger,
         val_check_interval=eval_interval,
         use_distributed_sampler=False,  
     )

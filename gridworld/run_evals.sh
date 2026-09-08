@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Run every evaluation for one trained dataset and persist the results.
 #
-#   ./run_evals.sh <data-name> <map-dir> [num-sequences]
+#   ./run_evals.sh <data-name> <run-name> <map-dir> [num-sequences]
+#
+# <data-name> is the dataset under data/; <run-name> is the trained model under
+# ckpts/, which is also where results are written. Pass the same run name you
+# gave train.py as --model_name. They can be equal if you only train one
+# architecture on a dataset.
 #
 # Writes results/<data>/<script>.json for each metric, results/<data>/map/ for
 # the reconstruction, and results/<data>/map-control/ for the matched noise
@@ -13,16 +18,18 @@
 # with --use-untrained-model.
 set -uo pipefail
 
-DATA="${1:?usage: run_evals.sh <data-name> <map-dir> [num-sequences]}"
-MAP_DIR="${2:?usage: run_evals.sh <data-name> <map-dir> [num-sequences]}"
-NSEQ="${3:-6400}"
+USAGE="usage: run_evals.sh <data-name> <run-name> <map-dir> [num-sequences]"
+DATA="${1:?$USAGE}"
+RUN="${2:?$USAGE}"
+MAP_DIR="${3:?$USAGE}"
+NSEQ="${4:-6400}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$HERE/../world-model-evaluation-main"
 MAP_DIR="$(cd "$MAP_DIR" && pwd)"
 cd "$REPO"
 
-RESULTS="results/$DATA"
+RESULTS="results/$RUN"
 mkdir -p "$RESULTS"
 FAILURES=0
 
@@ -35,18 +42,18 @@ run() {  # keep going if one step fails; the log and the tally say which
   fi
 }
 
-run python evaluate_traversal_capabilities.py --data "$DATA"
-run python next_token_test.py --data "$DATA"
-run python probe_test.py --data "$DATA" --use-heldout
-run python compression_test.py --data "$DATA"
-run python distinction_test.py --data "$DATA"
+run python evaluate_traversal_capabilities.py --data "$DATA" --run "$RUN"
+run python next_token_test.py --data "$DATA" --run "$RUN"
+run python probe_test.py --data "$DATA" --run "$RUN" --use-heldout
+run python compression_test.py --data "$DATA" --run "$RUN"
+run python distinction_test.py --data "$DATA" --run "$RUN"
 for P in 0.01 0.10 0.50 0.75; do
-  run python detour_analysis.py --data "$DATA" --detour-prob "$P"
+  run python detour_analysis.py --data "$DATA" --run "$RUN" --detour-prob "$P"
 done
 
 # The reconstruction steps feed each other, so each one gates the next rather
 # than letting a failure cascade into a later script with a missing input.
-if run python "$HERE/sample_from_model.py" --data "$DATA" \
+if run python "$HERE/sample_from_model.py" --data "$DATA" --run "$RUN" \
       --out "$RESULTS/samples.txt" --num-sequences "$NSEQ"; then
 
   run python "$HERE/reconstruct_map.py" --map-dir "$MAP_DIR" \
@@ -128,3 +135,4 @@ if [ "$FAILURES" -gt 0 ]; then
   echo "$FAILURES step(s) failed -- see $REPO/$RESULTS/console.log"
 fi
 echo "All results under $REPO/$RESULTS/"
+echo "Compare every run with: python gridworld/compare_runs.py"

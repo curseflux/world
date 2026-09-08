@@ -36,43 +36,48 @@ python train.py --data nyc10-random-walks --model_name nyc10-random-walks \
     --batch_size_per_gpu 1024 --eval_every 0.5 --early_stopping_patience 5
 ```
 
-`--model_name` must match `--data`: checkpoints go to `ckpts/<model_name>/` and
-the eval scripts look in `ckpts/<data>/`. At batch 1024 that is ~299 steps per
-epoch. Early stopping ends the run when `val_loss` plateaus, so `--max_epochs`
-does not need tuning.
+Omit `--model_name` and it becomes `nyc10-random-walks-L12-E768-H12`, so a
+second architecture on the same dataset never overwrites the first. Checkpoints,
+`model_config.json` and CSV logs all land in `ckpts/<model_name>/`; pass that same
+name to every eval script as `--run`. At batch 1024 that is ~299 steps per epoch,
+and early stopping ends the run when `val_loss` plateaus, so `--max_epochs` does
+not need tuning.
 
 ### 3. All metrics
 
 Each writes `results/nyc10-random-walks/<script>.json` and echoes a summary.
 
 ```bash
-python evaluate_traversal_capabilities.py --data nyc10-random-walks
-python next_token_test.py                 --data nyc10-random-walks
-python probe_test.py                      --data nyc10-random-walks --use-heldout
-python compression_test.py                --data nyc10-random-walks
-python distinction_test.py                --data nyc10-random-walks
+RUN=nyc10-random-walks-L12-E768-H12
+
+python evaluate_traversal_capabilities.py --data nyc10-random-walks --run $RUN
+python next_token_test.py                 --data nyc10-random-walks --run $RUN
+python probe_test.py                      --data nyc10-random-walks --run $RUN --use-heldout
+python compression_test.py                --data nyc10-random-walks --run $RUN
+python distinction_test.py                --data nyc10-random-walks --run $RUN
 
 for P in 0.01 0.10 0.50 0.75; do
-  python detour_analysis.py --data nyc10-random-walks --detour-prob $P
+  python detour_analysis.py --data nyc10-random-walks --run $RUN --detour-prob $P
 done
 ```
 
-An untrained baseline, the reference row of the paper's Table 1, is the same
-commands with `--use-untrained-model`.
+`--run` selects the checkpoint and the results directory; it defaults to `--data`
+if you only ever train one architecture. An untrained baseline, the reference row
+of the paper's Table 1, is the same commands with `--use-untrained-model`.
 
 ### 4. Sample from the model and rebuild its map
 
 ```bash
 cd ..
 
-python gridworld/sample_from_model.py --data nyc10-random-walks \
-    --out world-model-evaluation-main/results/nyc10-random-walks/samples.txt \
+python gridworld/sample_from_model.py --data nyc10-random-walks --run $RUN \
+    --out world-model-evaluation-main/results/$RUN/samples.txt \
     --num-sequences 6400
 
 python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
-    --samples world-model-evaluation-main/results/nyc10-random-walks/samples.txt \
+    --samples world-model-evaluation-main/results/$RUN/samples.txt \
     --num-sequences 6400 \
-    --out-dir world-model-evaluation-main/results/nyc10-random-walks/map
+    --out-dir world-model-evaluation-main/results/$RUN/map
 ```
 
 Writes `map.svg`, `true_vs_reconstructed.svg` (the Figure 3 layout),
@@ -83,9 +88,9 @@ property of (model, sequence budget) rather than of the model:
 
 ```bash
 python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
-    --samples world-model-evaluation-main/results/nyc10-random-walks/samples.txt \
+    --samples world-model-evaluation-main/results/$RUN/samples.txt \
     --num-sequences 6400 --sweep \
-    --out-dir world-model-evaluation-main/results/nyc10-random-walks/map
+    --out-dir world-model-evaluation-main/results/$RUN/map
 ```
 
 ### 5. The matched noise control
@@ -99,13 +104,13 @@ step 4's `reconstruction.json`:
 ```bash
 python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
     --corrupt 0.02 --num-sequences 6400 \
-    --out-dir world-model-evaluation-main/results/nyc10-random-walks/map-control
+    --out-dir world-model-evaluation-main/results/$RUN/map-control
 ```
 
 ### Steps 3-5 in one go
 
 ```bash
-./gridworld/run_evals.sh nyc10-random-walks gridworld/maps/nyc10 [num-sequences]
+./gridworld/run_evals.sh nyc10-random-walks $RUN gridworld/maps/nyc10 [num-sequences]
 ```
 
 Runs every metric, samples from the model, reconstructs both point estimate and
@@ -127,6 +132,55 @@ reconstruction steps gate each other so a failed sampling run cannot cascade int
 a control run with no error rate to use. Failures are tallied at the end and
 recorded in `console.log`. For the paper's untrained reference row, re-run the
 metric scripts by hand with `--use-untrained-model`.
+
+### Sweeping model configurations
+
+One dataset, several architectures. Give each run its own name -- or let
+`train.py` derive one -- and nothing collides: checkpoints, `model_config.json`,
+CSV logs and results are all keyed on the run, not the dataset.
+
+```bash
+cd world-model-evaluation-main
+DATA=nyc10-random-walks
+
+for CFG in "4 128 4" "8 256 8" "12 256 8" "12 512 8" "12 768 12" "24 256 8"; do
+  set -- $CFG
+  python train.py --data $DATA --num_layers $1 --n_embd $2 --n_head $3 \
+      --batch_size_per_gpu 1024 --eval_every 0.5 --early_stopping_patience 5
+done
+
+for RUN in ckpts/${DATA}-L*; do
+  ../gridworld/run_evals.sh $DATA "$(basename $RUN)" ../gridworld/maps/nyc10
+done
+
+cd ..
+python gridworld/compare_runs.py --csv sweep.csv
+```
+
+```
+                run    layers      dims     heads    params  compress   jaccard  |E|/|E*|
+-------------------  --------  --------  --------  --------  --------  --------  --------
+   nyc10-L4-E128-H4         4       128         4      0.9M     0.440     0.310     2.400
+  nyc10-L12-E256-H8        12       256         8      9.7M     0.510     0.360     2.100
+ nyc10-L12-E768-H12        12       768        12     85.8M     0.530     0.350     2.200
+```
+
+Runs sort by parameter count, and missing metrics show as `-` so a partial sweep
+still tabulates. `--filter` narrows to a substring of the run name.
+
+**The shape of the columns is the result, not any single row.** If `compress` and
+`jaccard` stay flat while `params` grows by two orders of magnitude, size was not
+the binding constraint -- which is what the paper's own numbers imply (its 1.5B
+model scores 0.50 on compression where NextLat's 88M scores 0.65) and what this
+testbed exists to test. Vary depth and width separately: NextLat (App. F.1) found
+depth helping state tracking substantially and width negligibly, so `L24-E256`
+against `L12-E512` at matched parameter count is the more informative pair than
+either against a bigger model.
+
+The architecture a run loads at comes from the checkpoint's own
+`hyper_parameters`, saved by Lightning, not from a config file that could drift
+from the weights it claims to describe. A run therefore always loads at the shape
+it was trained at.
 
 ### Rendering maps on their own
 
@@ -320,7 +374,7 @@ rather than noise.
 ## Where results go
 
 ```
-world-model-evaluation-main/results/<data>/
+world-model-evaluation-main/results/<run>/
     next_token_test.json  probe_test.json  compression_test.json
     distinction_test.json  detour_analysis-p<rate>.json
     evaluate_traversal_capabilities.json
@@ -364,7 +418,8 @@ best `val_loss` checkpoint, so extra epochs cost only wall-clock.
 | `render_map.py` | renders the true map on its own |
 | `render.py` | shared renderer following the paper's figure convention |
 | `build_all.sh` | steps 1 above |
-| `run_evals.sh` | steps 3-5 above |
+| `run_evals.sh` | steps 3-5 above, for one run |
+| `compare_runs.py` | every run's results in one table, sorted by parameter count |
 
 ## Two traps this does not remove
 

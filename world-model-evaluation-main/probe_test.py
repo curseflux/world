@@ -20,6 +20,11 @@ parser.add_argument('--use-heldout', action='store_true',
                          'training sequences. The default reproduces the paper, which '
                          'fits and scores the probe on activations drawn from the '
                          "model's own training data.")
+parser.add_argument('--run', type=str, default=None,
+                    help='Name of the trained run: checkpoints are read from '
+                         'ckpts/<run>/ and results written to results/<run>/. '
+                         'Defaults to --data, i.e. one model per dataset. Use it '
+                         'to keep several architectures on one dataset apart.')
 args = parser.parse_args()
 data = args.data
 use_untrained_model = args.use_untrained_model
@@ -35,7 +40,7 @@ class MultinomialLogisticRegression(nn.Module):
     return out
 
 
-model = load_model(data, use_untrained_model)
+model = load_model(data, use_untrained_model, run=args.run)
 tokenizer = model.tokenizer
 valid_turns = tokenizer.valid_turns
 node_and_direction_to_neighbor = tokenizer.node_and_direction_to_neighbor
@@ -122,4 +127,5 @@ save_result('probe_test', data,
             {'probe_accuracy': float(accuracy), 'std_error': float(std),
              'num_classes': int(num_classes), 'num_test_points': int(len(y_test)),
              'split': 'heldout' if args.use_heldout else 'train'},
-            use_untrained_model)
+            use_untrained_model,
+            run=args.run, architecture=model.architecture)
