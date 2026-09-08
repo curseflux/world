@@ -134,9 +134,10 @@ metric scripts by hand with `--use-untrained-model`.
 python gridworld/render_map.py --map-dir gridworld/maps/nyc10 --out true_map.svg
 ```
 
-`--show-nodes` adds a dot per intersection; `--show-unused` (on
-`reconstruct_map.py`) adds true edges the reconstruction never used. Both are
-off by default, matching the paper.
+All off by default: `--show-nodes` adds a dot per intersection, and on
+`reconstruct_map.py`, `--show-unused` adds true edges the reconstruction never
+reached while `--highlight-false` colours real streets black and invented ones
+red within the reconstructed panel.
 
 ---
 
@@ -209,23 +210,30 @@ be undone.
 
 ### Drawing convention
 
-`render.py` follows `mapping/make_maps.py` exactly:
+Every panel is one map drawn as straight lines, one per directed edge, and
+nothing else -- no arrowheads, no node dots, no gridlines. Everything on the page
+is a road. `make_maps.py` also draws edges only: it assigns a `radius` and never
+uses it. A dot at every intersection makes a lattice read as graph paper, which
+is precisely the wrong impression, since the regular-looking lines *are* the
+roads.
 
-| element | drawn as |
+| panel | drawn as |
 | --- | --- |
-| true edge, used | straight, thin, black, no direction shown |
-| false edge, invented | **curved**, lightsalmon -> firebrick gradient toward the target |
-| true edge, never used | skipped (`continue` in `make_map`) |
-| intersections | **not drawn** -- `make_map` assigns a `radius` and never uses it |
+| true map | black |
+| reconstructed map | red -- **every** edge the reconstruction used, real or invented |
 
-No arrowheads, and no dots: everything on the page is a road. A dot at every
-intersection makes a lattice read as graph paper, which is precisely the wrong
-impression, since the regular-looking lines *are* the roads.
+The two sit side by side in `true_vs_reconstructed.svg`, and that comparison is
+the point: extra red streets, or missing ones, are read off against the black map
+beside it. Drawing the real edges black *inside* the reconstructed panel just
+repeats the left panel on top of the right one. `--highlight-false` restores that
+split when you want it, which is useful zoomed in on one neighbourhood.
 
-The curve carries half the argument. Its Bezier control point leans along the
-edge's own *label*, so an edge labelled NW that runs east bulges northwest before
-swinging back -- which is how "impossible physical orientations" and "flyovers"
-become visible rather than merely counted.
+This departs from the paper in one respect. `make_maps.py` draws invented edges
+as Bezier curves whose control point leans along the edge's own *label*, so an
+edge labelled NW that runs east bulges northwest before swinging back -- its way
+of showing "impossible physical orientations" and "flyovers". At 10x10 that
+mostly produces a tangle, and the same signal is reported exactly as
+`impossible_orientation_rate`, so edges are drawn straight here.
 
 ### Every metric, and what it is worth
 

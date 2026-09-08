@@ -46,7 +46,7 @@ def main():
                 f"one-way streets, mean out-degree "
                 f"{sum(degrees) / len(degrees):.2f}")
     render.render(graph, coords, args.out, title=args.title, subtitle=subtitle,
-                  cell=args.cell, show_nodes=args.show_nodes)
+                  cell=args.cell, palette=render.TRUE, show_nodes=args.show_nodes)
     print(subtitle)
     print(f"-> {args.out}")
 
