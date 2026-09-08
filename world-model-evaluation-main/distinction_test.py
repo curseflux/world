@@ -18,6 +18,11 @@ parser.add_argument('--num-suffix-samples', type=int, default=5)
 parser.add_argument('--epsilon', type=float, default=0.01)
 parser.add_argument('--num-trials', type=int, default=100)
 
+parser.add_argument('--run', type=str, default=None,
+                    help='Name of the trained run: checkpoints are read from '
+                         'ckpts/<run>/ and results written to results/<run>/. '
+                         'Defaults to --data, i.e. one model per dataset. Use it '
+                         'to keep several architectures on one dataset apart.')
 args = parser.parse_args()
 data = args.data
 use_untrained_model = args.use_untrained_model
@@ -27,7 +32,7 @@ epsilon = args.epsilon
 num_trials = args.num_trials
 
 # Load model and tokenizer
-model = utils.load_model(data, use_untrained_model)
+model = utils.load_model(data, use_untrained_model, run=args.run)
 tokenizer = model.tokenizer
 valid_turns = tokenizer.valid_turns
 node_and_direction_to_neighbor = tokenizer.node_and_direction_to_neighbor
@@ -138,4 +143,5 @@ save_result('distinction_test', data,
              'distinction_recall_std_error': float(std_recall),
              'num_state_pairs_scored': len(state_pair_to_prefixes_to_precision),
              'num_trials_requested': int(num_trials), 'epsilon': float(epsilon)},
-            use_untrained_model)
+            use_untrained_model,
+            run=args.run, architecture=model.architecture)

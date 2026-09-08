@@ -11,11 +11,16 @@ import pdb
 parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='shortest-paths')
 parser.add_argument('--use-untrained-model', action='store_true')
+parser.add_argument('--run', type=str, default=None,
+                    help='Name of the trained run: checkpoints are read from '
+                         'ckpts/<run>/ and results written to results/<run>/. '
+                         'Defaults to --data, i.e. one model per dataset. Use it '
+                         'to keep several architectures on one dataset apart.')
 args = parser.parse_args()
 data = args.data
 use_untrained_model = args.use_untrained_model
 
-model = load_model(data, use_untrained_model)
+model = load_model(data, use_untrained_model, run=args.run)
 tokenizer = model.tokenizer
 valid_turns = tokenizer.valid_turns
 node_and_direction_to_neighbor = tokenizer.node_and_direction_to_neighbor
@@ -59,4 +64,5 @@ for batch in bar:
 save_result('next_token_test', data,
             {'next_token_accuracy': float(p), 'std_error': float(std),
              'num_success': int(num_success), 'num_total': int(num_total)},
-            use_untrained_model)
+            use_untrained_model,
+            run=args.run, architecture=model.architecture)

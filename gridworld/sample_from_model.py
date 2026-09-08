@@ -23,6 +23,9 @@ from utils import is_valid_sequence, load_model
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="dataset name under data/")
+    parser.add_argument("--run", default=None,
+                        help="trained run name; checkpoints are read from "
+                             "ckpts/<run>/. Defaults to --data.")
     parser.add_argument("--out", required=True, help="output samples .txt")
     parser.add_argument("--num-sequences", type=int, default=6400)
     parser.add_argument("--batch-size", type=int, default=256)
@@ -35,7 +38,7 @@ def main():
     torch.manual_seed(args.seed)
     random.seed(args.seed)
 
-    model = load_model(args.data, args.use_untrained_model)
+    model = load_model(args.data, args.use_untrained_model, run=args.run)
     tokenizer = model.tokenizer
     valid_turns = tokenizer.valid_turns
     n2n = tokenizer.node_and_direction_to_neighbor

@@ -16,6 +16,11 @@ parser.add_argument('--detour-prob', type=float, default=0.01)
 parser.add_argument('--num-trials', type=int, default=100)
 parser.add_argument('--detour-type', type=str, default='random_valid', help='Options: least_likely, random_valid, second_most_likely')
 
+parser.add_argument('--run', type=str, default=None,
+                    help='Name of the trained run: checkpoints are read from '
+                         'ckpts/<run>/ and results written to results/<run>/. '
+                         'Defaults to --data, i.e. one model per dataset. Use it '
+                         'to keep several architectures on one dataset apart.')
 args = parser.parse_args()
 data = args.data
 use_untrained_model = args.use_untrained_model
@@ -23,7 +28,7 @@ detour_prob = args.detour_prob
 num_trials = args.num_trials
 detour_type = args.detour_type
 
-model = load_model(data, use_untrained_model)
+model = load_model(data, use_untrained_model, run=args.run)
 tokenizer = model.tokenizer
 valid_turns = tokenizer.valid_turns
 node_and_direction_to_neighbor = tokenizer.node_and_direction_to_neighbor
@@ -105,4 +110,5 @@ save_result(f'detour_analysis-p{detour_prob}', data,
             {'valid_traversal_rate': float(success_rate), 'std_error': float(std),
              'detour_prob': float(detour_prob), 'detour_type': detour_type,
              'num_sequences': int(total_nodes)},
-            use_untrained_model)
+            use_untrained_model,
+            run=args.run, architecture=model.architecture)
