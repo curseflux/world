@@ -95,6 +95,21 @@ python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
 
 ### 5. The matched noise control
 
+`map/` and `map-control/` hold the same kind of artifacts, reconstructed by the
+same algorithm at the same sequence budget. The only difference is where the
+sequences came from:
+
+| | sequences reconstructed from |
+| --- | --- |
+| `map/` | the **trained model** -- prompt it with (origin, destination) pairs and sample. This is the map the model's own behaviour implies. |
+| `map-control/` | the **true world model**, with a fraction of direction tokens randomly re-labelled at the model's own per-token error rate. This is what a merely sloppy transcriber of the *correct* map would produce. |
+
+The control is the paper's Figure 3 middle panel, and it exists because an
+absolute Jaccard means nothing on its own -- reconstruction is brutally sensitive
+to error rate. The result is the gap between the two.
+
+
+
 An absolute precision number means nothing on its own. Corrupt true traversals
 at the model's own error rate and reconstruct from those; a model whose map is
 merely noisy scores like the control, one whose map is incoherent scores far
@@ -352,7 +367,18 @@ same budget.
 *A baseline.* Corrupting just **2%** of direction tokens in *true* traversals
 already drops Jaccard to ~0.34, so a model scoring 0.4 may be doing well. The
 quantity that means something is the gap against the control at the model's own
-error rate:
+error rate.
+
+The rate must be matched in the right units. `--corrupt` is a probability **per
+direction token**, which is what the paper matches on -- "with probability equal
+to the probability of an error for the random walks transformer, we randomly
+re-label an edge in a sequence". `reconstruction.json` reports the model's own
+`token_error_rate`, estimated by walking each generated sequence under the true
+map and counting tokens up to and including the first illegal one. A per-sequence
+failure rate is not a substitute: over ~26-token sequences a per-token rate of
+0.05 already makes 50% of sequences invalid, so feeding the sequence rate to
+`--corrupt` over-corrupts the control tenfold and flatters the model it exists to
+test.
 
 ```
 edge_jaccard(model) - edge_jaccard(control at the same error rate)
@@ -385,7 +411,8 @@ world-model-evaluation-main/results/<run>/
     map/map.svg              the reconstructed map
     map/true_vs_reconstructed.svg
     map/invented_edges.json  every false edge, with its label and true bearing
-    map-control/             the same pair, from the matched noise control
+    map-control/             the same artifacts, reconstructed from the true
+                             map corrupted at the model's own token_error_rate
 ```
 
 Detour results are one file per rate -- `detour_analysis-p0.01.json` and so on --

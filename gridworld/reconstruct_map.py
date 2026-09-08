@@ -94,6 +94,35 @@ def corrupt_sequences(valid_turns, n2n, coords, count, rate, max_len, rng):
     return sequences
 
 
+def token_error_rate(sequences, valid_turns, n2n):
+    """Per-token probability that a generated direction is illegal.
+
+    This is the quantity --corrupt takes, and the one the paper matches its
+    control on: "with probability equal to the probability of an error for the
+    random walks transformer, we randomly re-label an edge in a sequence".
+
+    Each direction token is a Bernoulli trial. After the first illegal one the
+    walk's true state is undefined, so later tokens in that sequence cannot be
+    judged and the sequence stops contributing. Counting trials up to and
+    including the first error is the MLE for the per-token rate.
+
+    A per-*sequence* failure rate is not a substitute: over ~26-token sequences a
+    per-token rate of 0.002 already makes ~5% of sequences invalid, so passing a
+    sequence rate to --corrupt over-corrupts the control by more than an order of
+    magnitude and flatters the model it is meant to be compared against.
+    """
+    trials = errors = 0
+    for sequence in sequences:
+        node = sequence[0]
+        for direction in sequence[2:]:
+            trials += 1
+            if direction not in valid_turns.get(node, ()):
+                errors += 1
+                break
+            node = n2n[(node, direction)]
+    return errors / trials if trials else 0.0
+
+
 def score(reconstructed, coords):
     """Edge precision/recall, plus the rate of physically impossible edges.
 
@@ -251,6 +280,8 @@ def main():
     metrics, invented = score(reconstructed, coords)
     metrics.update(sequences_used=len(sequences),
                    sequences_unreconstructable=failed,
+                   token_error_rate=round(
+                       token_error_rate(sequences, valid_turns, n2n), 6),
                    max_degree=max_degree,
                    max_distance=round(max_distance, 3),
                    source=source)
