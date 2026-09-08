@@ -158,6 +158,11 @@ def main():
     parser.add_argument("--show-nodes", action="store_true",
                         help="draw a dot at each intersection. Off by default: the "
                              "paper's make_map draws edges only.")
+    parser.add_argument("--highlight-false", action="store_true",
+                        help="in the reconstructed panel, colour real streets black "
+                             "and invented ones red. Off by default: the true map "
+                             "sits alongside for comparison, so the reconstructed "
+                             "panel is drawn as one map of what the model implies.")
     parser.add_argument("--show-unused", action="store_true",
                         help="also draw true edges the reconstruction never used. The "
                              "paper's make_map skips these, so the default does too.")
@@ -264,12 +269,14 @@ def main():
                 f"   -   {source}")
     render.render(reconstructed, coords, f"{args.out_dir}/map.svg",
                   title="Reconstructed map", subtitle=subtitle,
+                  palette=render.RECONSTRUCTED, highlight_false=args.highlight_false,
                   show_unused=args.show_unused, show_nodes=args.show_nodes)
     render.render_pair(
         true_graph, reconstructed, coords, f"{args.out_dir}/true_vs_reconstructed.svg",
         left_title="True world model",
         left_sub=f"{true_graph.number_of_edges()} edges",
         right_title="Reconstructed from sequences", right_sub=subtitle,
+        highlight_false=args.highlight_false,
         show_unused=args.show_unused, show_nodes=args.show_nodes)
 
     print(json.dumps(metrics, indent=2))
