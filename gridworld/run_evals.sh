@@ -65,10 +65,14 @@ if run python "$HERE/sample_from_model.py" --data "$DATA" --run "$RUN" \
     --out-dir "$RESULTS/map"
 
   if [ -f "$RESULTS/map/reconstruction.json" ]; then
+    # --corrupt is a per-TOKEN probability, so the control must be matched on the
+    # model's per-token error rate. A per-sequence failure rate is roughly an
+    # order of magnitude larger over 26-token sequences and would over-corrupt
+    # the control, flattering the model it exists to be compared against.
     ERR=$(python -c "
 import json
 m = json.load(open('$RESULTS/map/reconstruction.json'))
-print(round(m['sequences_unreconstructable'] / max(m['sequences_used'], 1), 4))")
+print(m['token_error_rate'])")
 
     # Same error rate, same sequence budget: the only fair comparison, since
     # invented edges accumulate with both.
@@ -124,7 +128,7 @@ if model:
 if model and control:
     gap = model["edge_jaccard"] - control["edge_jaccard"]
     print(f"  control jaccard          {control['edge_jaccard']:.3f} "
-          f"(same error rate and budget)")
+          f"(true map corrupted at {model['token_error_rate']:.4f}/token, same budget)")
     print(f"\n  GAP vs control           {gap:+.3f}")
     print("  Near zero: the map is no worse than transcription noise at the same")
     print("  rate. Well below zero: the errors are structured, an incoherent map.")
