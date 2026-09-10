@@ -96,8 +96,17 @@ def walk(sequence, valid_turns, n2n):
     return observations, True, node == destination
 
 
+NOT_A_DIRECTION = "(not a direction)"
+
+
 def analyse(sequences, valid_turns, n2n, distances):
     """Every breakdown in one pass."""
+    # The vocabulary mixes node ids with direction tokens, so a model can emit a
+    # node id where a turn belongs. That is a harsher error than a wrong turn --
+    # it is not even the right kind of token -- so count it separately rather
+    # than letting it hide among the illegal turns.
+    direction_tokens = {direction for _, direction in n2n}
+    non_direction = collections.Counter()
     by_position = collections.defaultdict(lambda: [0, 0])      # hazard
     by_out_degree = collections.defaultdict(lambda: [0, 0])
     by_direction = collections.defaultdict(lambda: [0, 0])
@@ -112,8 +121,11 @@ def analyse(sequences, valid_turns, n2n, distances):
         for position, direction, degree, illegal in observations:
             tokens += 1
             errors += illegal
+            if direction not in direction_tokens:
+                non_direction[direction] += 1
+            label = direction if direction in direction_tokens else NOT_A_DIRECTION
             for table, key in ((by_position, position), (by_out_degree, degree),
-                               (by_direction, direction)):
+                               (by_direction, label)):
                 table[key][1] += 1
                 table[key][0] += illegal
             if illegal:
@@ -134,6 +146,8 @@ def analyse(sequences, valid_turns, n2n, distances):
         "tokens_examined": tokens,
         "illegal_tokens": errors,
         "token_error_rate": round(errors / tokens, 6) if tokens else 0.0,
+        "non_direction_tokens": sum(non_direction.values()),
+        "non_direction_examples": dict(non_direction.most_common(8)),
         "legal_sequence_rate": round(legal_sequences / len(sequences), 4) if sequences else 0.0,
         "reached_destination_rate": round(arrived / len(sequences), 4) if sequences else 0.0,
         "by_position": {k: v for k, v in sorted(by_position.items())},
@@ -290,7 +304,13 @@ def render(report, path, heading):
         table = report[key]
         if not table:
             continue
-        numeric = {int(k) if str(k).lstrip("-").isdigit() else k: v for k, v in table.items()}
+        # All-or-nothing: coercing per key mixes int and str in one dict as soon as
+        # a direction panel contains a non-direction token, and sorted() then fails.
+        keys = list(table)
+        if keys and all(str(k).lstrip("-").isdigit() for k in keys):
+            numeric = {int(k): v for k, v in table.items()}
+        else:
+            numeric = dict(table)
         if counts_only:
             binned = [(str(k), v, v) for k, v in sorted(numeric.items())][:20]
         else:
@@ -338,6 +358,12 @@ def main():
 
     print(f"{report['illegal_tokens']}/{report['tokens_examined']} tokens illegal "
           f"({report['token_error_rate']:.3%} per token)")
+    if report["non_direction_tokens"]:
+        print(f"WARNING: {report['non_direction_tokens']} of those were not direction "
+              f"tokens at all -- the model emitted e.g. "
+              f"{', '.join(list(report['non_direction_examples'])[:4])} where a turn "
+              f"belongs. The vocabulary mixes node ids with directions, so this is "
+              f"possible; it is a harsher failure than a wrong turn.")
     print(f"{report['legal_sequence_rate']:.1%} of paths fully legal, "
           f"{report['reached_destination_rate']:.1%} reached the destination")
     positions = report["by_position"]
