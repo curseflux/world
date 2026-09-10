@@ -165,7 +165,8 @@ def rebin(table, target=14):
     return out
 
 
-def bars(bins, x, y, width, height, title, subtitle, ylabel, counts_only=False):
+def bars(bins, x, y, width, height, title, subtitle, ylabel, counts_only=False,
+         reference=None):
     """One panel: title, hairline grid, capped bars, Wilson whiskers."""
     pad_left, pad_bottom, pad_top = 46, 30, 44
     plot_w = width - pad_left - 10
@@ -201,6 +202,17 @@ def bars(bins, x, y, width, height, title, subtitle, ylabel, counts_only=False):
                      f'text-anchor="end" font-variant-numeric="tabular-nums">{fmt(tick)}</text>')
     parts.append(f'<line x1="{x0}" y1="{y0 + plot_h}" x2="{x0 + plot_w}" y2="{y0 + plot_h}" '
                  f'stroke="{AXIS}" stroke-width="1"/>')
+
+    # The whole question on a hazard panel is "do the bars track this line or
+    # climb across it", which is unanswerable without the line drawn.
+    if reference is not None:
+        value, label = reference
+        ry = y0 + plot_h - (value / ceiling) * plot_h
+        if y0 <= ry <= y0 + plot_h:
+            parts.append(f'<line x1="{x0}" y1="{ry:.1f}" x2="{x0 + plot_w}" y2="{ry:.1f}" '
+                         f'stroke="{WHISKER}" stroke-width="1" opacity="0.45"/>')
+            parts.append(f'<text x="{x0 + plot_w}" y="{ry - 4:.1f}" font-size="9" '
+                         f'fill="{MUTED}" text-anchor="end">{label}</text>')
     parts.append(f'<text x="{x0 - 38}" y="{y0 - 8}" font-size="9.5" fill="{MUTED}">{ylabel}</text>')
 
     band = plot_w / max(len(values), 1)
@@ -247,25 +259,27 @@ def bars(bins, x, y, width, height, title, subtitle, ylabel, counts_only=False):
 
 
 def render(report, path, heading):
+    overall = report["token_error_rate"]
+    arrived = report["reached_destination_rate"]
     panels = [
-        ("by_position", "Hazard rate by position in path",
-         "among sequences still legal at position k, share whose k-th turn is illegal",
-         "illegal", False),
-        ("by_sequence_length", "Invalid-sequence rate by path length",
-         "share of generated paths of each length containing any illegal turn",
-         "invalid", False),
-        ("by_od_distance", "Reached destination by shortest-path distance",
-         "share of paths that ended at the destination they were prompted with",
-         "arrived", False),
-        ("first_error_position", "Where the first error falls",
-         "count of sequences whose first illegal turn is at this position",
-         "count", True),
-        ("by_out_degree", "Hazard rate by out-degree of current node",
-         "are junctions with more choices harder?",
-         "illegal", False),
-        ("by_direction", "Hazard rate by direction emitted",
-         "is any one token disproportionately wrong?",
-         "illegal", False),
+        ("by_position", "1. Error rate vs how deep into the path",
+         "FLAT = steady noise   RISING = losing track of state",
+         "wrong turns", False, (overall, f"overall {overall:.2%}")),
+        ("by_sequence_length", "2. Broken paths vs path length",
+         "share of generated paths of that length with any wrong turn",
+         "broken paths", False, None),
+        ("by_od_distance", "3. Arrived at destination vs how far it was",
+         "short trips easy, long trips hard = a planning limit, not a legality one",
+         "arrived", False, (arrived, f"overall {arrived:.0%}")),
+        ("first_error_position", "4. Where the first wrong turn happens",
+         "count of paths whose first wrong turn is at that step",
+         "paths", True, None),
+        ("by_out_degree", "5. Error rate vs junction complexity",
+         "out-degree of the node the model was standing on",
+         "wrong turns", False, (overall, f"overall {overall:.2%}")),
+        ("by_direction", "6. Error rate vs direction emitted",
+         "is one token disproportionately wrong?",
+         "wrong turns", False, (overall, f"overall {overall:.2%}")),
     ]
     pw, ph, gap = 400, 210, 34
     body = [f'<text x="30" y="30" font-size="16" font-weight="600" fill="{INK}">{heading}</text>',
@@ -274,8 +288,9 @@ def render(report, path, heading):
             f'({report["token_error_rate"]:.3%} per token) across {report["sequences"]} sequences; '
             f'{report["legal_sequence_rate"]:.1%} of paths fully legal, '
             f'{report["reached_destination_rate"]:.1%} reached their destination. '
-            f'Whiskers are Wilson 95% intervals.</text>']
-    for index, (key, title, subtitle, ylabel, counts_only) in enumerate(panels):
+            f'Taller bar = more wrong turns. Whiskers are Wilson 95% intervals, so a '
+            f'tall whisker means too few samples to trust that bar; hover for n.</text>']
+    for index, (key, title, subtitle, ylabel, counts_only, reference) in enumerate(panels):
         table = report[key]
         if not table:
             continue
@@ -286,7 +301,7 @@ def render(report, path, heading):
             binned = rebin(numeric)
         col, row = index % 2, index // 2
         body += bars(binned, 30 + col * (pw + gap), 74 + row * (ph + gap),
-                     pw, ph, title, subtitle, ylabel, counts_only)
+                     pw, ph, title, subtitle, ylabel, counts_only, reference)
 
     width = 30 * 2 + pw * 2 + gap
     height = 74 + 3 * (ph + gap)

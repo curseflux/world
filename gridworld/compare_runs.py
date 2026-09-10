@@ -29,8 +29,13 @@ COLUMNS = [
     ("detour_analysis-p0.01.json", "detour.01", "valid_traversal_rate"),
     ("detour_analysis-p0.5.json", "detour.5", "valid_traversal_rate"),
     ("map/reconstruction.json", "jaccard", "edge_jaccard"),
-    ("map/reconstruction.json", "|E|/|E*|", "edge_count_ratio"),
     ("map-control/reconstruction.json", "ctrl-jac", "edge_jaccard"),
+    ("map/reconstruction.json", "sat-floor", "saturation_jaccard"),
+    ("map/reconstruction.json", "|E|/|E*|", "edge_count_ratio"),
+    # The budget-independent quality number: unlike jaccard it does not drift
+    # with how many sequences were reconstructed.
+    ("error_analysis.json", "tok-err", "token_error_rate"),
+    ("error_analysis.json", "arrived", "reached_destination_rate"),
 ]
 
 
@@ -122,6 +127,14 @@ def main():
             writer.writeheader()
             writer.writerows(rows)
         print(f"\n-> {args.csv}")
+
+    gaps = [r for r in rows if r.get("jaccard") is not None
+            and r.get("sat-floor") is not None
+            and r["jaccard"] < r["sat-floor"] * 1.25]
+    if gaps:
+        print("\nSaturated (jaccard within 25% of the floor, so it is measuring the "
+              "sequence budget rather than the model): "
+              + ", ".join(r["run"] for r in gaps), file=sys.stderr)
 
     missing = [r["run"] for r in rows if r.get("compress") is None]
     if missing:
