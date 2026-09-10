@@ -181,7 +181,17 @@ python gridworld/compare_runs.py --csv sweep.csv
 ```
 
 Runs sort by parameter count, and missing metrics show as `-` so a partial sweep
-still tabulates. `--filter` narrows to a substring of the run name.
+still tabulates. `--filter` narrows to a substring of the run name. `tok-err` is
+the budget-independent quality number; `sat-floor` is the value `jaccard`
+converges on at a large budget, and the script warns for any run whose jaccard is
+within 25% of it.
+
+**Just the Jaccard numbers**, for one run or all of them:
+
+```bash
+python gridworld/compare_runs.py --filter nyc10-random-walks
+grep -h jaccard world-model-evaluation-main/results/<run>/map*/reconstruction.json
+```
 
 **The shape of the columns is the result, not any single row.** If `compress` and
 `jaccard` stay flat while `params` grows by two orders of magnitude, size was not
@@ -207,6 +217,27 @@ python gridworld/analyze_errors.py --map-dir gridworld/maps/nyc10 \
     --samples world-model-evaluation-main/results/$RUN/samples.txt \
     --out-dir world-model-evaluation-main/results/$RUN
 ```
+
+**How to read the panels.** Every bar is a *rate*, so taller is worse (except
+panel 3, where taller is better). The horizontal line is the overall rate across
+all sequences; the question on those panels is whether the bars *track* that line
+or *climb across* it. The whisker on each bar is a Wilson 95% interval: a tall
+whisker means too few samples in that bin to trust it, so ignore the bar. Hover
+any bar for its sample count.
+
+| panel | x axis | what a flat profile means | what a rising profile means |
+| --- | --- | --- | --- |
+| 1. error rate vs depth | how many turns in | steady noise: the model has the map, it just slips | it loses track of where it is as the path lengthens |
+| 2. broken paths vs length | path length | long paths fail only because they contain more chances to slip | long paths are disproportionately broken |
+| 3. arrived vs distance | true distance to the destination | routing works at every range | *falling* here = a planning limit, distinct from a legality one |
+| 4. first wrong turn | step index | first errors spread evenly | first errors bunch late (or early, if the model starts badly) |
+| 5. error rate vs out-degree | choices at the junction | junction complexity does not matter | busy junctions are where it breaks |
+| 6. error rate vs token | direction emitted | no token is special | one direction is disproportionately wrong -- often a data artifact |
+
+Panel 1 is the one that decides the question. Concretely: the two synthetic
+controls in this repo's history report *early 0.949% vs late 0.968%* (flat) and
+*early 0.272% vs late 1.776%* (rising), and the script prints that comparison and
+its verdict on stdout, so you do not have to eyeball it.
 
 Six panels, and the first is the one that matters: the **hazard rate by position**
 -- among sequences still legal at position k, the share whose k-th turn is
