@@ -398,9 +398,14 @@ ratio     = |R| / |T|              how badly the edge budget is blown, and which
 
 **`edge_jaccard` is the number you want.** "Correct edges, exactly as many as the
 original, no more and no less" is set equality, `R == T`, and Jaccard is 1.0 if
-and only if that holds. An invented edge and a missed edge cost the same. Fed
-uncorrupted sequences the reconstruction returns exactly 1.0 with
-`edge_count_ratio` 1.0, which is the pipeline's self-check.
+and only if that holds. An invented edge and a missed edge cost the same.
+
+Fed uncorrupted sequences the reconstruction invents **zero** false edges, so
+precision is exactly 1.0 at any budget -- that is the pipeline's self-check.
+Jaccard additionally needs enough sequences to traverse every edge at least once:
+on the density-1.7 map that is ~600, so the 200-sequence auto budget reports
+precision 1.000 with recall 0.994. Missing an edge you never drove down is a
+property of the budget, not of the map.
 
 Pair it with `edge_count_ratio` for the diagnosis. Recall saturates at 1.0 almost
 immediately -- a few hundred sequences reach nearly every real street -- so all
@@ -441,7 +446,31 @@ per edge and lands in the saturated regime. `reconstruction.json` reports
 **`token_error_rate` is the budget-independent quality number.** Read it first;
 read Jaccard as "what does the implied map look like at a sane budget".
 
-`--sweep` reports the whole curve. At 2% corruption on the density-1.7 map:
+`--sweep` reports the whole curve, as `sweep.json` and `sweep.svg`:
+
+```bash
+python gridworld/reconstruct_map.py --map-dir gridworld/maps/nyc10 \
+    --samples world-model-evaluation-main/results/$RUN/samples.txt --sweep \
+    --out-dir world-model-evaluation-main/results/$RUN/map
+```
+
+It sweeps 25, 50, 100 ... doubling to 32x the point-estimate budget, and prints
+where jaccard peaks. **Jaccard peaks where recall has just saturated**: below
+that the map is still missing real streets, above it only false ones are being
+added. That peak is also where the metric separates models best -- measured on
+this map, across a 25x spread of model error rates:
+
+| model error rate | peak jaccard | at N | jaccard at N=6300 |
+| --- | --- | --- | --- |
+| 0.002 / token | **0.943** | 100 | 0.482 |
+| 0.01 / token | **0.873** | 100 | 0.362 |
+| 0.05 / token | **0.678** | 50 | 0.335 |
+
+At the peak the three are cleanly separated; at 6,300 they are 0.48 / 0.36 / 0.34,
+all crushed against the 0.34 floor. So compare runs at a fixed budget near the
+peak, not at the largest one you can afford.
+
+At 2% corruption on the density-1.7 map:
 
 ```
    seqs    prec  recall      F1     IoU  |E|/|E*|  invented
@@ -501,6 +530,7 @@ world-model-evaluation-main/results/<run>/
     samples.txt              sequences drawn from the trained model
     map/reconstruction.json  every edge metric at the full budget
     map/sweep.json           the same metrics at doubling sequence budgets
+    map/sweep.svg            that curve plotted, with the saturation floor marked
     error_analysis.json      hazard by position, path length, out-degree, token
     error_analysis.svg       the same, as six panels
     map/map.svg              the reconstructed map
@@ -540,6 +570,7 @@ best `val_loss` checkpoint, so extra epochs cost only wall-clock.
 | `analyze_errors.py` | error hazard by position, path length, out-degree and token |
 | `render_map.py` | renders the true map on its own |
 | `render.py` | shared renderer following the paper's figure convention |
+| `chartkit.py` | shared SVG chart primitives (palette, line chart) |
 | `build_all.sh` | steps 1 above |
 | `run_evals.sh` | steps 3-5 above, for one run |
 | `compare_runs.py` | every run's results in one table, sorted by parameter count |

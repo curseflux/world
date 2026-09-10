@@ -30,13 +30,9 @@ import math
 import os
 import pickle
 
-SURFACE = "#fcfcfb"
-INK = "#0b0b0b"
-SECONDARY = "#52514e"
-MUTED = "#898781"
-GRID = "#e1e0d9"
-AXIS = "#c3c2b7"
-SERIES = "#2a78d6"
+from chartkit import SURFACE, INK, SECONDARY, MUTED, GRID, AXIS
+
+SERIES = "#2a78d6"  # categorical slot 1; these panels are all single-series
 # Uncertainty whiskers are chrome, not a second series: they are held to
 # legibility over both the surface and the bar they cross, not to the
 # categorical lightness band. A surface-coloured casing under a dark stroke is
