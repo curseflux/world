@@ -197,6 +197,39 @@ The architecture a run loads at comes from the checkpoint's own
 from the weights it claims to describe. A run therefore always loads at the shape
 it was trained at.
 
+### Where the errors fall
+
+`analyze_errors.py` breaks the generation errors down rather than summing them,
+which separates two failure modes a single rate cannot:
+
+```bash
+python gridworld/analyze_errors.py --map-dir gridworld/maps/nyc10 \
+    --samples world-model-evaluation-main/results/$RUN/samples.txt \
+    --out-dir world-model-evaluation-main/results/$RUN
+```
+
+Six panels, and the first is the one that matters: the **hazard rate by position**
+-- among sequences still legal at position k, the share whose k-th turn is
+illegal. (It has to be a hazard: after the first illegal token the walk's true
+state is undefined, so later tokens in that sequence cannot be judged.)
+
+* **flat** -- errors arrive at a constant per-token rate however far into a path
+  the model is. That is transcription noise over a map it basically has.
+* **rising** -- the rate climbs with position: the model loses track of where it
+  is as the path lengthens. That is a state-tracking failure, and it is the
+  paper's actual claim.
+
+The other panels: invalid-sequence rate by path length, destination reached by
+shortest-path distance, where the first error falls, hazard by out-degree of the
+current node, and hazard by direction token. Bars carry Wilson 95% intervals, so
+a thin bin is visibly uncertain rather than silently noisy; hover any bar for its
+sample count. `error_analysis.json` is the same numbers as a table.
+
+Validated against synthetic sources with known structure: injecting an iid 1%
+per-token error reports 0.968% and "flat" (early 0.949% vs late 0.968%);
+injecting a hazard that grows with position reports "rising" (early 0.272% vs
+late 1.776%).
+
 ### Rendering maps on their own
 
 ```bash
@@ -345,10 +378,39 @@ implied city has nearly three times Manhattan's streets.
 
 **Two things must be controlled before the number means anything.**
 
-*Budget.* Every sequence is another chance to force a new edge, so precision and
-Jaccard fall monotonically with `--num-sequences` while recall rises. A single
-value is a property of (model, budget), not of the model. `--sweep` reports the
-curve instead. At 2% corruption on the density-1.7 map:
+*Budget -- and this one is severe.* Reconstruction can fill at most `max_degree`
+out-edges per node, so on the density-1.7 map there are 170 true edges among
+100 x 5 = 500 fillable slots. Given enough sequences, **any** model with a
+non-zero error rate converges on a Jaccard of 170/500 = 0.34. Past that point the
+metric measures the budget, not the model.
+
+The same corrupted-at-0.2%-per-token source, reconstructed twice:
+
+| budget | jaccard |
+| --- | --- |
+| 200 (auto) | **0.949** |
+| 6,400 | **0.482** |
+
+and across error rates, everything collapses toward 0.34:
+
+| p per token | N=200 | N=800 | N=3200 | N=6400 |
+| --- | --- | --- | --- | --- |
+| 0.002 | 0.918 | 0.833 | 0.612 | 0.482 |
+| 0.005 | 0.909 | 0.694 | 0.451 | 0.393 |
+| 0.01 | 0.790 | 0.548 | 0.394 | 0.362 |
+| 0.05 | 0.501 | 0.354 | 0.337 | 0.335 |
+
+At N=6,400 a 25x difference in model quality spans 0.48 to 0.34; at N=200 it
+spans 0.92 to 0.50. So `--num-sequences` now defaults to **0 = auto**: ~0.65
+sequences per true edge, the ratio the paper itself used (6,400 for Manhattan's
+9,846 edges), floored at 200. Copying 6,400 onto a 170-edge map is 38 sequences
+per edge and lands in the saturated regime. `reconstruction.json` reports
+`saturation_jaccard` and warns when the result is within 25% of it.
+
+**`token_error_rate` is the budget-independent quality number.** Read it first;
+read Jaccard as "what does the implied map look like at a sane budget".
+
+`--sweep` reports the whole curve. At 2% corruption on the density-1.7 map:
 
 ```
    seqs    prec  recall      F1     IoU  |E|/|E*|  invented
@@ -408,6 +470,8 @@ world-model-evaluation-main/results/<run>/
     samples.txt              sequences drawn from the trained model
     map/reconstruction.json  every edge metric at the full budget
     map/sweep.json           the same metrics at doubling sequence budgets
+    error_analysis.json      hazard by position, path length, out-degree, token
+    error_analysis.svg       the same, as six panels
     map/map.svg              the reconstructed map
     map/true_vs_reconstructed.svg
     map/invented_edges.json  every false edge, with its label and true bearing
@@ -442,6 +506,7 @@ best `val_loss` checkpoint, so extra epochs cost only wall-clock.
 | `validate_dataset.py` | every sequence legal, no OD-pair leakage, node and edge coverage |
 | `sample_from_model.py` | draws traversals from a trained model, no osmnx |
 | `reconstruct_map.py` | reconstructs the implied map, scores it, renders both SVGs |
+| `analyze_errors.py` | error hazard by position, path length, out-degree and token |
 | `render_map.py` | renders the true map on its own |
 | `render.py` | shared renderer following the paper's figure convention |
 | `build_all.sh` | steps 1 above |

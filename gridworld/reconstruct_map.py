@@ -175,7 +175,12 @@ def main():
     parser.add_argument("--corrupt", type=float,
                         help="instead of --samples, corrupt this fraction of direction "
                              "tokens in true traversals (the paper's noise control)")
-    parser.add_argument("--num-sequences", type=int, default=6400)
+    parser.add_argument("--num-sequences", type=int, default=0,
+                        help="0 auto-scales to the graph: ~0.65 sequences per true "
+                             "edge, the same ratio the paper used (6,400 sequences "
+                             "for Manhattan's 9,846 edges), floored at 200. Copying "
+                             "6,400 onto a 170-edge map reconstructs 38 sequences "
+                             "per edge and saturates the metric.")
     parser.add_argument("--max-degree", type=int, default=0,
                         help="0 uses the true graph's own maximum out-degree")
     parser.add_argument("--max-distance", type=float, default=0.0,
@@ -209,6 +214,11 @@ def main():
     # not invent an edge longer than the longest real one, nor exceed the true
     # graph's own maximum out-degree.
     max_degree = args.max_degree or max(len(v) for v in valid_turns.values())
+    true_edges = sum(len(v) for v in valid_turns.values())
+    if not args.num_sequences:
+        args.num_sequences = max(200, round(0.65 * true_edges))
+        print(f"--num-sequences auto: {args.num_sequences} "
+              f"({true_edges} true edges x 0.65, floored at 200)")
     max_distance = args.max_distance or max(
         math.dist(coords[node], coords[neighbor]) for (node, _), neighbor in n2n.items())
 
@@ -278,6 +288,13 @@ def main():
 
     reconstructed, failed = run(sequences)
     metrics, invented = score(reconstructed, coords)
+
+    # Reconstruction can fill at most max_degree out-edges per node, so with enough
+    # sequences ANY model with a non-zero error rate converges on this floor. Past
+    # it the metric stops measuring the model and starts measuring the budget.
+    ceiling_edges = len(valid_turns) * max_degree
+    saturation = true_edges / ceiling_edges
+    metrics["saturation_jaccard"] = round(saturation, 4)
     metrics.update(sequences_used=len(sequences),
                    sequences_unreconstructable=failed,
                    token_error_rate=round(
@@ -311,6 +328,13 @@ def main():
         show_unused=args.show_unused, show_nodes=args.show_nodes)
 
     print(json.dumps(metrics, indent=2))
+    if metrics["edge_jaccard"] < saturation * 1.25:
+        print(f"\nWARNING: jaccard {metrics['edge_jaccard']:.3f} is close to the "
+              f"saturation floor {saturation:.3f} ({true_edges} true edges over "
+              f"{len(valid_turns)} nodes x {max_degree} slots). At this budget the "
+              f"metric barely separates a good model from a bad one -- lower "
+              f"--num-sequences, and read token_error_rate as the model-quality "
+              f"number instead.")
     print(f"-> {args.out_dir}/map.svg")
     print(f"-> {args.out_dir}/true_vs_reconstructed.svg")
 
