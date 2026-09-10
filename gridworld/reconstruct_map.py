@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import networkx as nx
 import reconstruction
 
+import chartkit
 import render
 from build_map import bearing
 
@@ -217,8 +218,14 @@ def main():
     true_edges = sum(len(v) for v in valid_turns.values())
     if not args.num_sequences:
         args.num_sequences = max(200, round(0.65 * true_edges))
+        if args.sweep:
+            # A sweep is about the shape of the curve, so it needs range well
+            # past the point-estimate budget; at the auto budget alone it would
+            # be a single point.
+            args.num_sequences = max(6400, 32 * args.num_sequences)
         print(f"--num-sequences auto: {args.num_sequences} "
-              f"({true_edges} true edges x 0.65, floored at 200)")
+              f"({true_edges} true edges x 0.65, floored at 200"
+              f"{', x32 for the sweep' if args.sweep else ''})")
     max_distance = args.max_distance or max(
         math.dist(coords[node], coords[neighbor]) for (node, _), neighbor in n2n.items())
 
@@ -260,7 +267,7 @@ def main():
         # of the model. The curve says which: one that flattens means a bounded
         # map, even a wrong one; one still climbing means the model keeps
         # inventing streets for as long as you keep asking.
-        budgets, size = [], 200
+        budgets, size = [], 25
         while size < len(sequences):
             budgets.append(size)
             size *= 2
@@ -281,9 +288,35 @@ def main():
                   f"{point['edge_jaccard']:>6.3f}  {point['edge_count_ratio']:>8.3f}  "
                   f"{point['false_edges_invented']:>8d}")
         os.makedirs(args.out_dir, exist_ok=True)
+        saturation = true_edges / (len(valid_turns) * max_degree)
         with open(f"{args.out_dir}/sweep.json", "w") as f:
-            json.dump({"source": source, "curve": curve}, f, indent=2)
+            json.dump({"source": source, "saturation_jaccard": round(saturation, 4),
+                       "peak_jaccard_at": max(curve, key=lambda p: p["edge_jaccard"]),
+                       "curve": curve}, f, indent=2)
+        chartkit.line_chart(
+            [("precision", [p["edge_precision"] for p in curve]),
+             ("recall", [p["edge_recall"] for p in curve]),
+             ("jaccard", [p["edge_jaccard"] for p in curve])],
+            [p["sequences"] for p in curve],
+            f"{args.out_dir}/sweep.svg",
+            title="Reconstruction quality vs how many sequences you reconstruct",
+            subtitle=(f"{source}. Every sequence is another chance to invent an edge, "
+                      f"so precision and jaccard only fall; recall only rises. "
+                      f"Compare two runs at the same budget."),
+            y_label="score",
+            reference=(saturation, f"saturation floor {saturation:.2f}"))
+        # Jaccard peaks where recall has just saturated: before that the map is
+        # still missing real streets, after it only false ones are being added.
+        # That peak is the budget at which the metric best separates models.
+        best = max(curve, key=lambda p: p["edge_jaccard"])
+        print(f"\njaccard peaks at {best['edge_jaccard']:.3f} with "
+              f"{best['sequences']} sequences (recall {best['edge_recall']:.3f}); "
+              f"by {curve[-1]['sequences']} it has fallen to "
+              f"{curve[-1]['edge_jaccard']:.3f} against a floor of {saturation:.3f}.")
+        print(f"Compare runs at a fixed budget near {best['sequences']}, not at the "
+              f"largest one you can afford.")
         print(f"-> {args.out_dir}/sweep.json")
+        print(f"-> {args.out_dir}/sweep.svg")
         return
 
     reconstructed, failed = run(sequences)
