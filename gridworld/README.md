@@ -252,7 +252,12 @@ state is undefined, so later tokens in that sequence cannot be judged.)
 
 The other panels: invalid-sequence rate by path length, destination reached by
 shortest-path distance, where the first error falls, hazard by out-degree of the
-current node, and hazard by direction token. Bars carry Wilson 95% intervals, so
+current node, and hazard by direction token.
+
+Panel 6 has a `(not a direction)` bucket, and `non_direction_tokens` in the JSON
+counts it. The vocabulary mixes node ids with direction tokens, so a model can
+emit `47` where a turn belongs -- not a wrong turn but a wrong *kind* of token,
+which is the harsher failure. The script warns when it sees any. Bars carry Wilson 95% intervals, so
 a thin bin is visibly uncertain rather than silently noisy; hover any bar for its
 sample count. `error_analysis.json` is the same numbers as a table.
 
