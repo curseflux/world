@@ -22,7 +22,8 @@ USAGE="usage: run_evals.sh <data-name> <run-name> <map-dir> [num-sequences]"
 DATA="${1:?$USAGE}"
 RUN="${2:?$USAGE}"
 MAP_DIR="${3:?$USAGE}"
-NSEQ="${4:-6400}"
+# 0 lets reconstruct_map.py scale the budget to the graph.
+NSEQ="${4:-0}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$HERE/../world-model-evaluation-main"
@@ -63,6 +64,12 @@ if run python "$HERE/sample_from_model.py" --data "$DATA" --run "$RUN" \
   run python "$HERE/reconstruct_map.py" --map-dir "$MAP_DIR" \
     --samples "$RESULTS/samples.txt" --num-sequences "$NSEQ" --sweep \
     --out-dir "$RESULTS/map"
+
+  # Where the errors fall, not just how many. A flat hazard means transcription
+  # noise over a map the model basically has; a rising one means it loses track
+  # of state as the path lengthens.
+  run python "$HERE/analyze_errors.py" --map-dir "$MAP_DIR" \
+    --samples "$RESULTS/samples.txt" --out-dir "$RESULTS" --label "$RUN"
 
   if [ -f "$RESULTS/map/reconstruction.json" ]; then
     # --corrupt is a per-TOKEN probability, so the control must be matched on the
@@ -118,12 +125,19 @@ for label, filename, key in rows:
     value = record.get(key) if record else None
     print(f"  {label:<24} {value if value is None else f'{value:.3f}'}")
 
+errors = load("error_analysis.json")
+if errors:
+    print(f"\n  token error rate         {errors['token_error_rate']:.4%}")
+    print(f"  fully legal paths        {errors['legal_sequence_rate']:.3f}")
+    print(f"  reached destination      {errors['reached_destination_rate']:.3f}")
+
 model, control = load("map", "reconstruction.json"), load("map-control", "reconstruction.json")
 if model:
     print(f"\n  reconstructed edges      {model['reconstructed_edge_count']} "
           f"vs {model['true_edge_count']} true "
           f"(ratio {model['edge_count_ratio']:.2f})")
-    print(f"  edge jaccard             {model['edge_jaccard']:.3f}")
+    print(f"  edge jaccard             {model['edge_jaccard']:.3f} "
+          f"(saturation floor {model.get('saturation_jaccard', float('nan')):.3f})")
     print(f"  impossible orientations  {model['impossible_orientation_rate']:.3f}")
 if model and control:
     gap = model["edge_jaccard"] - control["edge_jaccard"]
